@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 
+# Application settings
 APP_NAME="9router"
 ROUTER_PORT="8553"
 SERVICE_FILE="/etc/systemd/system/9router.service"
 
 app_install() {
+    # Check if npm runtime exists
     if ! command -v npm &> /dev/null; then
-        echo -e "\033[0;31m[!] NPM not found. Install Node.js first.\033[0m"
+        echo -e "\033[0;31m[!] NPM not found. Please install Node.js first.\033[0m"
         return
     fi
     echo -e "\033[0;34m[*] Installing 9router globally via npm...\033[0m"
@@ -19,7 +21,8 @@ app_install() {
         return
     fi
 
-    echo -e "\033[0;34m[*] Configuring systemd service on port $ROUTER_PORT...\033[0m"
+    # Create systemd service unit
+    echo -e "\033[0;34m[*] Creating systemd service on port $ROUTER_PORT...\033[0m"
     cat <<SERVICE_EOF > "$SERVICE_FILE"
 [Unit]
 Description=9router Gateway Service
@@ -28,7 +31,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=$ROUTER_BIN --port $ROUTER_PORT
+ExecStart=$ROUTER_BIN --port$ROUTER_PORT
 Restart=always
 RestartSec=3
 Environment=PORT=$ROUTER_PORT
@@ -44,12 +47,12 @@ SERVICE_EOF
     if systemctl is-active --quiet 9router; then
         echo -e "\033[0;32m[+] 9router successfully running on port $ROUTER_PORT\033[0m"
     else
-        echo -e "\033[0;31m[!] Failed to start 9router service.\033[0m"
+        echo -e "\033[0;31m[!] Failed to start 9router service. Check: journalctl -u 9router -n 20\033[0m"
     fi
 }
 
 app_update() {
-    echo -e "\033[0;34m[*] Updating 9router...\033[0m"
+    echo -e "\033[0;34m[*] Updating 9router to latest version...\033[0m"
     npm install -g 9router@latest
     systemctl restart 9router
     echo -e "\033[0;32m[+] 9router updated and service restarted.\033[0m"
@@ -71,7 +74,7 @@ app_restart() {
 }
 
 app_delete() {
-    echo -e "\033[0;31m[!] Deleting 9router...\033[0m"
+    echo -e "\033[0;31m[!] Removing 9router service and binaries...\033[0m"
     systemctl stop 9router 2>/dev/null
     systemctl disable 9router 2>/dev/null
     rm -f "$SERVICE_FILE"
