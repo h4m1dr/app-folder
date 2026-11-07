@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# CLIProxyAPI Management Script (Modular & Systemd Managed)
-# Compatible with GolangEasy / Standalone Execution
+# CLIProxyAPI Complete Lifecycle & Deployment Script
+# Integrated with Systemd, Resource Guard, Static Assets & Nginx Reverse Proxy
 # ==============================================================================
 
 INSTALL_DIR="/opt/cliproxyapi"
+STATIC_DIR="$INSTALL_DIR/static"
 BIN_PATH="/usr/local/bin/cliproxyapi"
 SERVICE_FILE="/etc/systemd/system/cliproxyapi.service"
 CONFIG_FILE="$INSTALL_DIR/config.yaml"
@@ -27,12 +28,12 @@ get_version() {
     fi
 }
 
-download_binary() {
-    echo -e "${CLR_BLU}[*] Checking latest release of CLIProxyAPI...${CLR_NC}"
-    local tmp_dir="/tmp/cliproxy_pkg"
-    local tmp_tar="/tmp/cliproxyapi.tar.gz"
+download_and_extract_assets() {
+    echo -e "${CLR_BLU}[*] Checking latest release from GitHub...${CLR_NC}"
+    local tmp_dir="/tmp/cliproxy_setup"
+    local tmp_tar="/tmp/cliproxy_latest.tar.gz"
     rm -rf "$tmp_dir" "$tmp_tar"
-    mkdir -p "$tmp_dir"
+    mkdir -p "$tmp_dir" "$STATIC_DIR"
 
     local download_url
     download_url=$(curl -fsSL https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest | grep "browser_download_url.*linux.*amd64.tar.gz" | cut -d '"' -f 4 | head -n 1)
@@ -41,29 +42,41 @@ download_binary() {
         download_url="https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/CLIProxyAPI_linux_amd64.tar.gz"
     fi
 
-    echo -e "${CLR_BLU}[*] Downloading binary archive...${CLR_NC}"
+    echo -e "${CLR_BLU}[*] Downloading package archive...${CLR_NC}"
     if ! curl -fL "$download_url" -o "$tmp_tar"; then
-        echo -e "${CLR_RED}[!] Download failed. Check your internet connection or proxy.${CLR_NC}"
+        echo -e "${CLR_RED}[!] Download failed. Check network or proxy.${CLR_NC}"
         rm -rf "$tmp_dir" "$tmp_tar"
         return 1
     fi
 
     tar -xzf "$tmp_tar" -C "$tmp_dir"
 
+    # پیدا کردن و نصب فایل باینری واقعی Go
     local bin_source
     bin_source=$(find "$tmp_dir" -maxdepth 2 -type f -exec file {} + | grep "ELF 64-bit" | cut -d: -f1 | head -n 1)
 
     if [ -n "$bin_source" ] && [ -f "$bin_source" ]; then
+        systemctl stop cliproxyapi 2>/dev/null
         mv "$bin_source" "$BIN_PATH"
         chmod +x "$BIN_PATH"
-        rm -rf "$tmp_dir" "$tmp_tar"
-        echo -e "${CLR_GRN}[+] Binary installed successfully to $BIN_PATH${CLR_NC}"
-        return 0
+        echo -e "${CLR_GRN}[+] Binary installed to $BIN_PATH${CLR_NC}"
     else
-        echo -e "${CLR_RED}[!] Failed to locate valid ELF executable inside archive.${CLR_NC}"
+        echo -e "${CLR_RED}[!] Could not locate valid ELF binary in package.${CLR_NC}"
         rm -rf "$tmp_dir" "$tmp_tar"
         return 1
     fi
+
+    # انتقال فایل‌های استاتیک فرانت‌اند و قالب مدیریت
+    local static_source
+    static_source=$(find "$tmp_dir" -type d -name "static" | head -n 1)
+    if [ -n "$static_source" ] && [ -d "$static_source" ]; then
+        cp -r "$static_source"/* "$STATIC_DIR/" 2>/dev/null
+    fi
+
+    find "$tmp_dir" -maxdepth 2 -name "*.html" -exec cp {} "$STATIC_DIR/" \; 2>/dev/null
+
+    rm -rf "$tmp_dir" "$tmp_tar"
+    return 0
 }
 
 setup_systemd() {
@@ -84,7 +97,7 @@ Restart=always
 RestartSec=3
 LimitNOFILE=65535
 
-# Resource Security & Isolation
+# Resource Security & Limits
 MemoryMax=$mem_limit
 CPUQuota=$cpu_limit
 
@@ -94,14 +107,77 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
+
     systemctl daemon-reload
     systemctl enable cliproxyapi >/dev/null 2>&1
+}
+
+setup_nginx_domain() {
+    local domain="$1"
+    local port="$2"
+
+    if [ -z "$domain" ]; then
+        return 0
+    fi
+
+    echo -e "${CLR_BLU}[*] Configuring Nginx reverse proxy for $domain...${CLR_NC}"
+    local nginx_file="/etc/nginx/sites-available/$domain"
+
+    cat <<EOF > "$nginx_file"
+server {
+    listen 80;
+    server_name $domain;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name $domain;
+
+    ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
+
+    location = / {
+        return 302 /management.html;
+    }
+
+    location = /management.html {
+        alias $STATIC_DIR/management.html;
+        default_type text/html;
+    }
+
+    location /static/ {
+        alias $STATIC_DIR/;
+        autoindex off;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+
+    ln -sf "$nginx_file" "/etc/nginx/sites-enabled/$domain"
+
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx
+        echo -e "${CLR_GRN}[+] Nginx configured and reloaded successfully.${CLR_NC}"
+    else
+        echo -e "${CLR_RED}[!] Nginx syntax error. Please verify SSL paths or domain block.${CLR_NC}"
+    fi
 }
 
 install_wizard() {
     mkdir -p "$INSTALL_DIR"
 
-    download_binary || return 1
+    download_and_extract_assets || return 1
 
     echo ""
     echo -e "${CLR_CYN}====================================================${CLR_NC}"
@@ -145,20 +221,28 @@ EOF
     echo -e "${CLR_CYN}====================================================${CLR_NC}"
     echo -e "${CLR_CYN}     Phase 3: System Resource Control & Limits      ${CLR_NC}"
     echo -e "${CLR_CYN}====================================================${CLR_NC}"
-    read -p " Maximum Memory Limit (e.g. 256M, 512M, 1G) [Default: 256M]: " in_mem
+    read -p " Maximum Memory Limit (e.g. 256M, 512M) [Default: 256M]: " in_mem
     local mem_limit="${in_mem:-256M}"
 
-    read -p " CPU Quota percentage (e.g. 50%, 100%, 150%) [Default: 100%]: " in_cpu
+    read -p " CPU Quota percentage (e.g. 50%, 100%) [Default: 100%]: " in_cpu
     local cpu_limit="${in_cpu:-100%}"
 
     setup_systemd "$mem_limit" "$cpu_limit"
     systemctl restart cliproxyapi
 
     echo ""
-    echo -e "${CLR_GRN}[+] CLIProxyAPI service successfully deployed and running!${CLR_NC}"
-    echo -e " Endpoint: ${CLR_YLW}http://$host:$port${CLR_NC}"
-    echo -e " Config  : ${CLR_MUTED}$CONFIG_FILE${CLR_NC}"
-    echo -e " Service : ${CLR_MUTED}$SERVICE_FILE${CLR_NC}"
+    echo -e "${CLR_CYN}====================================================${CLR_NC}"
+    echo -e "${CLR_CYN}     Phase 4: Domain & Nginx Reverse Proxy Setup    ${CLR_NC}"
+    echo -e "${CLR_CYN}====================================================${CLR_NC}"
+    read -p " Configure Domain for Nginx? (e.g. 9c.ykno.ir) [Press Enter to skip]: " in_domain
+    if [ -n "$in_domain" ]; then
+        setup_nginx_domain "$in_domain" "$port"
+    fi
+
+    echo ""
+    echo -e "${CLR_GRN}[+] CLIProxyAPI successfully deployed and active!${CLR_NC}"
+    echo -e " Backend : ${CLR_YLW}http://$host:$port${CLR_NC}"
+    [ -n "$in_domain" ] && echo -e " Web UI  : ${CLR_YLW}https://$in_domain/management.html${CLR_NC}"
 }
 
 edit_config() {
@@ -210,9 +294,9 @@ while true; do
     fi
     echo -e "${CLR_CYN}------------------------------------------------------${CLR_NC}"
     if [ ! -f "$BIN_PATH" ]; then
-        echo " 1) Install CLIProxyAPI (Wizard Setup)"
+        echo " 1) Install CLIProxyAPI (Full Wizard)"
     else
-        echo " 1) Update / Re-configure CLIProxyAPI"
+        echo " 1) Update / Re-run Setup Wizard"
     fi
     echo " 2) Start Service"
     echo " 3) Stop Service"
@@ -220,7 +304,7 @@ while true; do
     echo " 5) View Real-Time Status & Logs"
     echo " 6) Edit Application Config (config.yaml)"
     echo " 7) Edit Systemd Service & Limits (cliproxyapi.service)"
-    echo " 8) Uninstall & Delete Everything"
+    echo " 8) Uninstall & Clean Everything"
     echo ""
     echo -e " ${CLR_ORG}b) Back${CLR_NC}"
     echo -e "${CLR_CYN}------------------------------------------------------${CLR_NC}"
@@ -242,8 +326,8 @@ while true; do
             echo -e "${CLR_GRN}[+] Service restarted.${CLR_NC}"
             read -p "Press Enter to continue..." ;;
         5)
-            echo -e "${CLR_BLU}[*] Displaying last 30 log entries (Press Ctrl+C to exit log viewer)...${CLR_NC}"
-            journalctl -u cliproxyapi -n 30 -f --no-pager
+            echo -e "${CLR_BLU}[*] Displaying logs (Press Ctrl+C to exit)...${CLR_NC}"
+            journalctl -u cliproxyapi -n 35 -f --no-pager
             read -p "Press Enter to continue..." ;;
         6)
             edit_config
