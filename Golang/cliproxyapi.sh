@@ -1,171 +1,141 @@
 #!/usr/bin/env bash
 
+INSTALL_DIR="/opt/cliproxyapi"
+BIN_PATH="/usr/local/bin/cliproxyapi"
+SERVICE_FILE="/etc/systemd/system/cliproxyapi.service"
+CONFIG_FILE="$INSTALL_DIR/config.yaml"
+
 CLR_RED='\033[0;31m'
 CLR_GRN='\033[0;32m'
 CLR_YLW='\033[1;33m'
 CLR_BLU='\033[0;34m'
-CLR_CYN='\033[0;36m'
 CLR_ORG='\033[38;5;208m'
 CLR_MUTED='\033[90m'
 CLR_NC='\033[0m'
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_RAW_URL="https://raw.githubusercontent.com/h4m1dr/app-folder/main/Golang"
-CACHE_DIR="/tmp/app-folder-golang-cache"
-PERM_DIR="/opt/app-folder/Golang"
-
-KNOWN_APPS=("authelia.sh" "cliproxyapi.sh")
-
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${CLR_RED}[!] Please run as root (sudo).${CLR_NC}"
-    exit 1
-fi
-
-is_go_installed() {
-    command -v go &> /dev/null && return 0
-    return 1
-}
-
-TARGET_GO_VER=""
-CACHED_GO_LOCAL=""
-
-init_runtime_metadata() {
-    echo -e "${CLR_MUTED}[*] Initializing Go environment and metadata cache...${CLR_NC}"
-    if is_go_installed; then
-        CACHED_GO_LOCAL=$(go version 2>/dev/null | awk '{print $3}')
-    fi
-}
-
-get_go_version_status() {
-    if is_go_installed; then
-        echo -e "${CLR_GRN}${CACHED_GO_LOCAL:-Installed}${CLR_NC}"
+get_version() {
+    if [ -f "$BIN_PATH" ]; then
+        "$BIN_PATH" --version 2>/dev/null | awk '{print $3}'
     else
-        echo -e "${CLR_MUTED}Not Installed (Native Binaries Used)${CLR_NC}"
+        echo "Not Installed"
     fi
 }
 
-others_menu() {
-    local uninstalled_files=("$@")
-    while true; do
-        clear
-        echo "======================================"
-        echo "          Available Apps (Others)     "
-        echo "======================================"
-        if [ ${#uninstalled_files[@]} -eq 0 ]; then
-            echo " (No uninstalled apps found)"
-            echo "--------------------------------------"
-            echo -e " ${CLR_ORG}b) Back${CLR_NC}"
-            echo -e " ${CLR_RED}e) Exit${CLR_NC}"
-            read -p " Select option: " choice
-            [[ "$choice" =~ ^[bB]$ ]] && break
-            [[ "$choice" =~ ^[eE]$ ]] && { clear; exit 0; }
-            continue
-        fi
-
-        local idx=1
-        for f in "${uninstalled_files[@]}"; do
-            local base_name
-            base_name=$(basename "$f" .sh)
-            echo " $idx) $base_name"
-            ((idx++))
-        done
-        echo ""
-        echo -e " ${CLR_ORG}b) Back${CLR_NC}"
-        echo -e " ${CLR_RED}e) Exit${CLR_NC}"
-        echo "--------------------------------------"
-        read -p " Select option: " choice
-
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#uninstalled_files[@]} ]; then
-            local selected_file="${uninstalled_files[$((choice - 1))]}"
-            if [ -f "$selected_file" ]; then
-                source "$selected_file"
-                declare -f app_menu > /dev/null && app_menu
-                break
-            fi
-        elif [[ "$choice" =~ ^[bB]$ ]]; then
-            break
-        elif [[ "$choice" =~ ^[eE]$ ]]; then
-            clear
-            exit 0
-        fi
-    done
-}
-
-main_menu() {
-    init_runtime_metadata
-
-    local target_scripts=()
-    for f in "$SCRIPT_DIR"/*.sh; do
-        [ -f "$f" ] && target_scripts+=("$f")
-    done
-
-    if [ ${#target_scripts[@]} -eq 0 ]; then
-        mkdir -p "$CACHE_DIR"
-        for app_script in "${KNOWN_APPS[@]}"; do
-            [ ! -f "$CACHE_DIR/$app_script" ] && curl -fsSL "$REPO_RAW_URL/$app_script" -o "$CACHE_DIR/$app_script" 2>/dev/null
-            [ -f "$CACHE_DIR/$app_script" ] && target_scripts+=("$CACHE_DIR/$app_script")
-        done
+download_binary() {
+    echo -e "${CLR_BLU}[*] Downloading CLIProxyAPI binary...${CLR_NC}"
+    local tmp_tar="/tmp/cliproxyapi.tar.gz"
+    local download_url="https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/CLIProxyAPI_linux_amd64.tar.gz"
+    
+    if ! curl -fsSL "$download_url" -o "$tmp_tar"; then
+        echo -e "${CLR_RED}[!] Download failed.${CLR_NC}"
+        return 1
     fi
 
-    for f in "${target_scripts[@]}"; do
-        if [ -f "$f" ]; then
-            source "$f"
-            declare -f app_init_metadata > /dev/null && app_init_metadata
-        fi
-    done
-
-    while true; do
-        clear
-        echo "======================================"
-        echo "          GolangEasy Manager          "
-        echo "======================================"
-        echo -e " Go Runtime    : $(get_go_version_status)"
-        echo "--------------------------------------"
-
-        local installed_files=()
-        local uninstalled_files=()
-
-        for f in "${target_scripts[@]}"; do
-            if [ -f "$f" ]; then
-                source "$f"
-                if declare -f app_is_installed > /dev/null && app_is_installed; then
-                    installed_files+=("$f")
-                else
-                    uninstalled_files+=("$f")
-                fi
-            fi
-        done
-
-        local idx=1
-        for f in "${installed_files[@]}"; do
-            local base_name
-            base_name=$(basename "$f" .sh)
-            echo " $idx) $base_name"
-            ((idx++))
-        done
-
-        local others_idx=$idx
-        echo " $others_idx) others"
-        echo ""
-        echo -e " ${CLR_RED}e) Exit${CLR_NC}"
-        echo "======================================"
-        read -p " Select option: " choice
-
-        if [[ "$choice" =~ ^[0-9]+$ ]]; then
-            if [ "$choice" -ge 1 ] && [ "$choice" -lt "$others_idx" ]; then
-                local selected_file="${installed_files[$((choice - 1))]}"
-                if [ -f "$selected_file" ]; then
-                    source "$selected_file"
-                    declare -f app_menu > /dev/null && app_menu
-                fi
-            elif [ "$choice" -eq "$others_idx" ]; then
-                others_menu "${uninstalled_files[@]}"
-            fi
-        elif [[ "$choice" =~ ^[eE]$ ]]; then
-            clear
-            exit 0
-        fi
-    done
+    tar -xzf "$tmp_tar" -C /tmp/
+    mv /tmp/CLIProxyAPI "$BIN_PATH" 2>/dev/null || mv /tmp/cliproxyapi "$BIN_PATH"
+    chmod +x "$BIN_PATH"
+    rm -f "$tmp_tar"
+    echo -e "${CLR_GRN}[+] Binary installed to $BIN_PATH${CLR_NC}"
+    return 0
 }
 
-main_menu
+setup_systemd() {
+    cat <<EOF > "$SERVICE_FILE"
+[Unit]
+Description=CLIProxyAPI LLM Proxy Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$BIN_PATH -config $CONFIG_FILE
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable cliproxyapi >/dev/null 2>&1
+}
+
+install_cliproxyapi() {
+    mkdir -p "$INSTALL_DIR"
+    download_binary || return
+
+    read -p " Enter listening Port (Default: 8080): " in_port
+    local port="${in_port:-8080}"
+    read -p " Enter Web Auth Key (Default: admin123456): " in_key
+    local key="${in_key:-admin123456}"
+
+    cat <<EOF > "$CONFIG_FILE"
+host: "127.0.0.1"
+port: $port
+auth_key: "$key"
+log_level: "info"
+EOF
+
+    setup_systemd
+    systemctl restart cliproxyapi
+    echo -e "${CLR_GRN}[+] CLIProxyAPI installed and running on port $port.${CLR_NC}"
+}
+
+while true; do
+    clear
+    echo "======================================"
+    echo "          CLIProxyAPI Menu            "
+    echo "======================================"
+    if [ -f "$BIN_PATH" ]; then
+        echo -e " Status  : ${CLR_GRN}Installed${CLR_NC}"
+        echo -e " Version : ${CLR_GRN}$(get_version)${CLR_NC}"
+    else
+        echo -e " Status  : ${CLR_RED}Not Installed${CLR_NC}"
+    fi
+    echo "--------------------------------------"
+    if [ ! -f "$BIN_PATH" ]; then
+        echo " 1) Install CLIProxyAPI"
+    else
+        echo " 1) Update CLIProxyAPI"
+    fi
+    echo " 2) Start Service"
+    echo " 3) Stop Service"
+    echo " 4) Restart Service"
+    echo " 5) View Status & Logs"
+    echo " 6) Delete CLIProxyAPI"
+    echo ""
+    echo -e " ${CLR_ORG}b) Back${CLR_NC}"
+    echo "--------------------------------------"
+    read -p " Select option: " c
+    case $c in
+        1)
+            if [ ! -f "$BIN_PATH" ]; then
+                install_cliproxyapi
+            else
+                systemctl stop cliproxyapi
+                download_binary
+                systemctl restart cliproxyapi
+                echo -e "${CLR_GRN}[+] Updated.${CLR_NC}"
+            fi
+            read -p "Press Enter to continue..." ;;
+        2) systemctl start cliproxyapi; echo -e "${CLR_GRN}[+] Started.${CLR_NC}"; read -p "Press Enter to continue..." ;;
+        3) systemctl stop cliproxyapi; echo -e "${CLR_YLW}[*] Stopped.${CLR_NC}"; read -p "Press Enter to continue..." ;;
+        4) systemctl restart cliproxyapi; echo -e "${CLR_GRN}[+] Restarted.${CLR_NC}"; read -p "Press Enter to continue..." ;;
+        5) journalctl -u cliproxyapi -n 25 --no-pager; read -p "Press Enter to continue..." ;;
+        6)
+            read -p " Delete CLIProxyAPI? [y/N]: " conf
+            if [[ "$conf" =~ ^[yY]$ ]]; then
+                systemctl stop cliproxyapi 2>/dev/null
+                systemctl disable cliproxyapi 2>/dev/null
+                rm -f "$SERVICE_FILE" "$BIN_PATH"
+                rm -rf "$INSTALL_DIR"
+                systemctl daemon-reload
+                echo -e "${CLR_GRN}[+] Deleted.${CLR_NC}"
+            fi
+            read -p "Press Enter to continue..." ;;
+        b|B) break ;;
+    esac
+done
