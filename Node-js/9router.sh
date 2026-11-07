@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 
+# Application configuration
 APP_NAME="9router"
 ROUTER_PORT="8553"
 SERVICE_FILE="/etc/systemd/system/9router.service"
 
+# A service is truly installed only if its systemd service unit exists
 app_is_installed() {
-    if command -v 9router &> /dev/null || [ -f "$SERVICE_FILE" ]; then
+    if [ -f "$SERVICE_FILE" ]; then
         return 0
     fi
     return 1
 }
 
+# Resolve active Node.js and NPM paths
 resolve_runtime() {
     if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
         echo -e "\033[0;31m[!] Node.js runtime not found.\033[0m"
@@ -36,7 +39,7 @@ app_install() {
         return
     fi
 
-    echo -e "\033[0;34m[*] Setting up systemd unit on port $ROUTER_PORT...\033[0m"
+    echo -e "\033[0;34m[*] Creating systemd unit on port $ROUTER_PORT...\033[0m"
     cat <<SERVICE_EOF > "$SERVICE_FILE"
 [Unit]
 Description=9router Gateway Service
@@ -60,13 +63,17 @@ SERVICE_EOF
     systemctl enable --now 9router
     sleep 2
     if systemctl is-active --quiet 9router; then
-        echo -e "\033[0;32m[+] 9router successfully running on port $ROUTER_PORT\033[0m"
+        echo -e "\033[0;32m[+] 9router successfully installed and running on port $ROUTER_PORT\033[0m"
     else
-        echo -e "\033[0;31m[!] Failed to start service. Check: journalctl -u 9router -n 20\033[0m"
+        echo -e "\033[0;31m[!] Service created but failed to start. Run: journalctl -u 9router -n 20\033[0m"
     fi
 }
 
 app_update() {
+    if ! app_is_installed; then
+        echo -e "\033[0;31m[!] 9router is not installed yet. Please install it first.\033[0m"
+        return
+    fi
     if ! resolve_runtime; then
         return
     fi
@@ -77,22 +84,43 @@ app_update() {
 }
 
 app_start() {
-    systemctl start 9router
-    echo -e "\033[0;32m[+] 9router service started.\033[0m"
+    if ! app_is_installed; then
+        echo -e "\033[0;31m[!] 9router is not installed. Unit file missing.\033[0m"
+        return
+    fi
+    if systemctl start 9router; then
+        echo -e "\033[0;32m[+] 9router service started.\033[0m"
+    else
+        echo -e "\033[0;31m[!] Failed to start 9router service.\033[0m"
+    fi
 }
 
 app_stop() {
-    systemctl stop 9router
-    echo -e "\033[1;33m[*] 9router service stopped.\033[0m"
+    if ! app_is_installed; then
+        echo -e "\033[0;31m[!] 9router is not installed.\033[0m"
+        return
+    fi
+    if systemctl stop 9router; then
+        echo -e "\033[1;33m[*] 9router service stopped.\033[0m"
+    else
+        echo -e "\033[0;31m[!] Failed to stop 9router service.\033[0m"
+    fi
 }
 
 app_restart() {
-    systemctl restart 9router
-    echo -e "\033[0;32m[+] 9router service restarted.\033[0m"
+    if ! app_is_installed; then
+        echo -e "\033[0;31m[!] 9router is not installed.\033[0m"
+        return
+    fi
+    if systemctl restart 9router; then
+        echo -e "\033[0;32m[+] 9router service restarted.\033[0m"
+    else
+        echo -e "\033[0;31m[!] Failed to restart 9router service.\033[0m"
+    fi
 }
 
 app_delete() {
-    echo -e "\033[0;31m[!] Removing 9router service and binaries...\033[0m"
+    echo -e "\033[0;31m[!] Completely removing 9router...\033[0m"
     systemctl stop 9router 2>/dev/null
     systemctl disable 9router 2>/dev/null
     rm -f "$SERVICE_FILE"
@@ -108,6 +136,12 @@ app_menu() {
         echo "======================================"
         echo "           9Router Menu               "
         echo "======================================"
+        if app_is_installed; then
+            echo -e " Status: \033[0;32mInstalled (Service Active)\033[0m"
+        else
+            echo -e " Status: \033[0;31mNot Installed\033[0m"
+        fi
+        echo "--------------------------------------"
         echo " 1) Install"
         echo " 2) Update"
         echo " 3) Start"
