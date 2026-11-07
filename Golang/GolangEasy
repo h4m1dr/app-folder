@@ -23,7 +23,6 @@ fi
 
 ensure_system_deps() {
     command -v curl &>/dev/null && command -v tar &>/dev/null && return 0
-    echo -e "${CLR_BLU}[*] Resolving runtime dependencies (curl, tar)...${CLR_NC}"
     apt-get update -y > /dev/null 2>&1
     apt-get install -y curl tar ca-certificates > /dev/null 2>&1
 }
@@ -46,13 +45,10 @@ get_go_bin() {
 TARGET_GO_VER=""
 CACHED_GO_LOCAL=""
 
-init_runtime_metadata() {
-    echo -e "${CLR_MUTED}[*] Gathering environment variables and system target releases...${CLR_NC}"
-
-    local go_bin
-    go_bin=$(get_go_bin)
-
-    if [ -n "$go_bin" ]; then
+go_engine_init_metadata() {
+    if is_go_installed && [ -z "$TARGET_GO_VER" ]; then
+        local go_bin
+        go_bin=$(get_go_bin)
         CACHED_GO_LOCAL=$("$go_bin" version 2>/dev/null | awk '{print $3}')
         TARGET_GO_VER=$(curl -fsSL "https://go.dev/VERSION?m=text" 2>/dev/null | head -n 1)
         [ -z "$TARGET_GO_VER" ] && TARGET_GO_VER="$CACHED_GO_LOCAL"
@@ -75,7 +71,6 @@ get_go_version_status() {
     fi
 }
 
-# ================= Golang Engine Sub-Menu =================
 go_install() {
     if is_go_installed; then
         echo -e "${CLR_GRN}[+] Go is already installed at: $(get_go_bin)${CLR_NC}"
@@ -99,7 +94,6 @@ go_install() {
     tar -C /usr/local -xzf "/tmp/$archive"
     rm -f "/tmp/$archive"
 
-    # Persist PATH in system environment
     if ! grep -q '/usr/local/go/bin' /etc/profile; then
         echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
     fi
@@ -107,7 +101,7 @@ go_install() {
 
     TARGET_GO_VER=""
     CACHED_GO_LOCAL=""
-    init_runtime_metadata
+    go_engine_init_metadata
     echo -e "${CLR_GRN}[+] Go ($ver) installed successfully.${CLR_NC}"
 }
 
@@ -134,8 +128,8 @@ go_update() {
 
     TARGET_GO_VER=""
     CACHED_GO_LOCAL=""
-    init_runtime_metadata
-    echo -e "${CLR_GRN}[+] Active Go: $(get_go_bin) ($("$ver"))${CLR_NC}"
+    go_engine_init_metadata
+    echo -e "${CLR_GRN}[+] Active Go: $(get_go_bin) ($ver)${CLR_NC}"
 }
 
 go_delete() {
@@ -183,7 +177,6 @@ go_menu() {
     done
 }
 
-# ================= System Wipe Sub-Menu =================
 wipe_simple() {
     echo -e "${CLR_BLU}[*] Running Simple Cache Wipe...${CLR_NC}"
     if is_go_installed; then
@@ -210,9 +203,9 @@ wipe_deep() {
 }
 
 wipe_cache_folder() {
-    echo -e "${CLR_BLU}[*] Removing remote runner script cache ($CACHE_DIR)...${CLR_NC}"
-    rm -rf "$CACHE_DIR"
-    echo -e "${CLR_GRN}[+] Script runner cache directory removed.${CLR_NC}"
+    echo -e "${CLR_BLU}[*] Removing all runner script caches...${CLR_NC}"
+    rm -rf /tmp/app-folder-golang-cache /tmp/app-folder-cache
+    echo -e "${CLR_GRN}[+] Script runner cache directories removed.${CLR_NC}"
 }
 
 wipe_permanent_folder() {
@@ -240,7 +233,7 @@ wipe_menu() {
         echo -e "    ${CLR_MUTED}(Purges Go mod caches, system package caches, and journal logs)${CLR_NC}"
         echo ""
         echo -e " 3) Wipe Remote Script Cache"
-        echo -e "    ${CLR_MUTED}(Deletes temporary runner folder: $CACHE_DIR)${CLR_NC}"
+        echo -e "    ${CLR_MUTED}(Deletes temporary runner folders in /tmp)${CLR_NC}"
         echo ""
         echo -e " 4) Wipe Permanent Application Folder"
         echo -e "    ${CLR_MUTED}(Deletes /opt/app-folder/Golang and global binary links)${CLR_NC}"
@@ -261,10 +254,9 @@ wipe_menu() {
     done
 }
 
-# ================= Self-Updater =================
 self_update() {
     echo -e "${CLR_BLU}[*] Reinstalling and updating scripts from GitHub...${CLR_NC}"
-    rm -rf "$CACHE_DIR"
+    rm -rf "$CACHE_DIR" /tmp/app-folder-golang-cache
 
     if [ -d "$PERM_DIR" ] && [ -f "$PERM_DIR/GolangEasy" ]; then
         curl -fsSL "$REPO_RAW_URL/GolangEasy" -o "$PERM_DIR/GolangEasy"
@@ -284,7 +276,6 @@ self_update() {
     fi
 }
 
-# ================= Others Sub-Menu =================
 others_menu() {
     local uninstalled_files=("$@")
     while true; do
@@ -334,9 +325,9 @@ others_menu() {
     done
 }
 
-# ================= Dynamic Main Menu =================
 main_menu() {
-    init_runtime_metadata
+    echo -e "${CLR_MUTED}[*] Gathering environment variables and system target releases...${CLR_NC}"
+    go_engine_init_metadata
 
     local target_scripts=()
     for f in "$SCRIPT_DIR"/*.sh; do
