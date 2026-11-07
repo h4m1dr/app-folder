@@ -38,7 +38,7 @@ app-folder/
 Run directly in memory without cloning the full repository:
 
 ```bash
-bash <(curl -fsSL [https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js/NodejsEasy](https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js/NodejsEasy)) </dev/tty
+bash <(curl -fsSL (https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js/NodejsEasy)) </dev/tty
 
 ```
 
@@ -48,7 +48,7 @@ bash <(curl -fsSL [https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node
 
 ```bash
 mkdir -p /opt/app-folder
-git clone [https://github.com/h4m1dr/app-folder.git](https://github.com/h4m1dr/app-folder.git) /opt/app-folder
+git clone (https://github.com/h4m1dr/app-folder.git) /opt/app-folder
 
 ```
 
@@ -94,7 +94,7 @@ nodejs-easy
 Execute directly in memory:
 
 ```bash
-bash <(curl -fsSL [https://raw.githubusercontent.com/h4m1dr/app-folder/main/Golang/GolangEasy](https://raw.githubusercontent.com/h4m1dr/app-folder/main/Golang/GolangEasy)) </dev/tty
+bash <(curl -fsSL (https://raw.githubusercontent.com/h4m1dr/app-folder/main/Golang/GolangEasy)) </dev/tty
 
 ```
 
@@ -104,7 +104,7 @@ bash <(curl -fsSL [https://raw.githubusercontent.com/h4m1dr/app-folder/main/Gola
 
 ```bash
 mkdir -p /opt/app-folder
-git clone [https://github.com/h4m1dr/app-folder.git](https://github.com/h4m1dr/app-folder.git) /opt/app-folder
+git clone (https://github.com/h4m1dr/app-folder.git) /opt/app-folder
 
 ```
 
