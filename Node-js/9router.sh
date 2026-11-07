@@ -5,7 +5,6 @@ APP_NAME="9router"
 ROUTER_PORT="8553"
 SERVICE_FILE="/etc/systemd/system/9router.service"
 
-# A service is truly installed only if its systemd service unit exists
 app_is_installed() {
     if [ -f "$SERVICE_FILE" ]; then
         return 0
@@ -13,7 +12,20 @@ app_is_installed() {
     return 1
 }
 
-# Resolve active Node.js and NPM paths
+get_app_version() {
+    if command -v 9router &> /dev/null; then
+        local ver
+        ver=$(9router --version 2>/dev/null || 9router -v 2>/dev/null)
+        if [ -n "$ver" ]; then
+            echo "$ver"
+        else
+            echo "Installed (CLI detected)"
+        fi
+    else
+        echo "Not Installed"
+    fi
+}
+
 resolve_runtime() {
     if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
         echo -e "\033[0;31m[!] Node.js runtime not found.\033[0m"
@@ -39,7 +51,7 @@ app_install() {
         return
     fi
 
-    echo -e "\033[0;34m[*] Creating systemd unit on port $ROUTER_PORT...\033[0m"
+    echo -e "\033[0;34m[*] Setting up systemd unit on port $ROUTER_PORT...\033[0m"
     cat <<SERVICE_EOF > "$SERVICE_FILE"
 [Unit]
 Description=9router Gateway Service
@@ -63,9 +75,9 @@ SERVICE_EOF
     systemctl enable --now 9router
     sleep 2
     if systemctl is-active --quiet 9router; then
-        echo -e "\033[0;32m[+] 9router successfully installed and running on port $ROUTER_PORT\033[0m"
+        echo -e "\033[0;32m[+] 9router successfully running on port $ROUTER_PORT\033[0m"
     else
-        echo -e "\033[0;31m[!] Service created but failed to start. Run: journalctl -u 9router -n 20\033[0m"
+        echo -e "\033[0;31m[!] Failed to start service. Check logs via option 5.\033[0m"
     fi
 }
 
@@ -81,6 +93,23 @@ app_update() {
     npm install -g 9router@latest
     systemctl restart 9router
     echo -e "\033[0;32m[+] 9router updated and service restarted.\033[0m"
+}
+
+app_status() {
+    clear
+    echo "======================================"
+    echo "       9Router Status & Logs          "
+    echo "======================================"
+    if ! app_is_installed; then
+        echo -e "\033[0;31m[!] 9router service is not installed.\033[0m"
+        return
+    fi
+
+    echo -e "\033[0;34m[*] Systemd Service Status:\033[0m"
+    systemctl status 9router --no-pager
+    echo ""
+    echo -e "\033[0;34m[*] Recent Journal Logs & Errors (last 30 lines):\033[0m"
+    journalctl -u 9router -n 30 --no-pager
 }
 
 app_start() {
@@ -120,7 +149,7 @@ app_restart() {
 }
 
 app_delete() {
-    echo -e "\033[0;31m[!] Completely removing 9router...\033[0m"
+    echo -e "\033[0;31m[!] Removing 9router service and binaries...\033[0m"
     systemctl stop 9router 2>/dev/null
     systemctl disable 9router 2>/dev/null
     rm -f "$SERVICE_FILE"
@@ -136,10 +165,15 @@ app_menu() {
         echo "======================================"
         echo "           9Router Menu               "
         echo "======================================"
+        local v_info
+        v_info=$(get_app_version)
         if app_is_installed; then
-            echo -e " Status: \033[0;32mInstalled (Service Active)\033[0m"
+            echo -e " Status  : \033[0;32mInstalled (Active)\033[0m"
+            echo -e " Version : \033[0;34m$v_info\033[0m"
+            echo -e " Port    : \033[0;33m$ROUTER_PORT\033[0m"
         else
-            echo -e " Status: \033[0;31mNot Installed\033[0m"
+            echo -e " Status  : \033[0;31mNot Installed\033[0m"
+            echo -e " Version : \033[0;31m$v_info\033[0m"
         fi
         echo "--------------------------------------"
         echo " 1) Install"
@@ -147,7 +181,8 @@ app_menu() {
         echo " 3) Start"
         echo " 4) Stop"
         echo " 5) Restart"
-        echo " 6) Delete"
+        echo " 6) Status & Logs"
+        echo " 7) Delete"
         echo " b) Back"
         echo "--------------------------------------"
         read -p " Select option: " choice
@@ -157,9 +192,10 @@ app_menu() {
             3) app_start; read -p "Press Enter to continue..." ;;
             4) app_stop; read -p "Press Enter to continue..." ;;
             5) app_restart; read -p "Press Enter to continue..." ;;
-            6) app_delete; read -p "Press Enter to continue..." ;;
+            6) app_status; read -p "Press Enter to continue..." ;;
+            7) app_delete; read -p "Press Enter to continue..." ;;
             b|B) break ;;
-            *) sleep 1 ;;
+            *) ;; # Keep in loop for any other key
         esac
     done
 }
