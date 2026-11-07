@@ -7,28 +7,34 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Resolve execution directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Ensure root privileges
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}[!] Please run as root (sudo).${NC}"
     exit 1
 fi
 
-# ================= Node.js Runtime Engine =================
-node_install() {
+# Simple check for main menu header (only checks if installed or not)
+is_node_installed() {
     if command -v node &> /dev/null; then
-        echo -e "${GREEN}[+] Node.js already installed: $(node -v)${NC}"
+        return 0
+    fi
+    return 1
+}
+
+# ================= Node.js Engine =================
+node_install() {
+    if is_node_installed; then
+        echo -e "${GREEN}[+] Node.js is already installed at: $(which node)${NC}"
         return
     fi
-    echo -e "${BLUE}[*] Installing Node.js LTS repository...${NC}"
+    echo -e "${BLUE}[*] Setting up Node.js repository (LTS)...${NC}"
     apt-get update -y && apt-get install -y ca-certificates curl gnupg
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
     apt-get update -y && apt-get install -y nodejs
-    echo -e "${GREEN}[+] Node.js installed: $(node -v)${NC}"
+    echo -e "${GREEN}[+] Node.js installed successfully.${NC}"
 }
 
 node_update() {
@@ -40,11 +46,11 @@ node_update() {
 }
 
 node_delete() {
-    echo -e "${YELLOW}[!] Removing Node.js and modules...${NC}"
+    echo -e "${YELLOW}[!] Purging Node.js and global packages...${NC}"
     apt-get purge -y nodejs npm
     apt-get autoremove -y
     rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg
-    rm -rf /root/.npm /root/.node-gyp /usr/local/lib/node_modules
+    rm -rf /root/.npm /root/.node-gyp /usr/local/lib/node_modules /usr/lib/node_modules
     echo -e "${GREEN}[+] Node.js removed.${NC}"
 }
 
@@ -54,6 +60,14 @@ node_menu() {
         echo "======================================"
         echo "          Node.js Engine Menu         "
         echo "======================================"
+        if is_node_installed; then
+            echo -e " Version     : ${GREEN}$(node -v)${NC}"
+            echo -e " Binary Path : ${BLUE}$(which node)${NC}"
+            echo -e " NPM Global  : ${BLUE}$(npm root -g 2>/dev/null)${NC}"
+        else
+            echo -e " Status      : ${RED}Not Installed${NC}"
+        fi
+        echo "--------------------------------------"
         echo " 1) Install Node.js"
         echo " 2) Update Node.js & NPM"
         echo " 3) Delete Node.js"
@@ -70,6 +84,48 @@ node_menu() {
     done
 }
 
+# ================= Others Sub-Menu =================
+others_menu() {
+    local uninstalled_files=("$@")
+    while true; do
+        clear
+        echo "======================================"
+        echo "          Available Apps (Others)     "
+        echo "======================================"
+        if [ ${#uninstalled_files[@]} -eq 0 ]; then
+            echo " (No uninstalled apps found)"
+            echo "--------------------------------------"
+            echo " b) Back"
+            read -p " Select option: " choice
+            break
+        fi
+
+        local idx=1
+        for f in "${uninstalled_files[@]}"; do
+            local base_name
+            base_name=$(basename "$f" .sh)
+            echo " $idx) $base_name"
+            ((idx++))
+        done
+        echo " b) Back"
+        echo "--------------------------------------"
+        read -p " Select option: " choice
+
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#uninstalled_files[@]} ]; then
+            local selected_file="${uninstalled_files[$((choice - 1))]}"
+            if [ -f "$selected_file" ]; then
+                source "$selected_file"
+                if declare -f app_menu > /dev/null; then
+                    app_menu
+                    break # Break back to refresh status in main menu
+                fi
+            fi
+        elif [[ "$choice" =~ ^[bB]$ ]]; then
+            break
+        fi
+    done
+}
+
 # ================= Smart Wiper =================
 smart_wipe() {
     echo -e "${BLUE}[*] Scanning residual caches & junk...${NC}"
@@ -78,13 +134,11 @@ smart_wipe() {
     local clean_deb=0
     local clean_logs=0
 
-    # Check NPM cache size
     if [ -d "/root/.npm" ] && [ "$(du -s /root/.npm 2>/dev/null | cut -f1)" -gt 1024 ]; then
         wipe_items+=("NPM Cache ($(du -sh /root/.npm 2>/dev/null | cut -f1))")
         clean_npm=1
     fi
 
-    # Check cached APT packages
     local DEB_COUNT
     DEB_COUNT=$(find /var/cache/apt/archives -type f -name '*.deb' 2>/dev/null | wc -l)
     if [ "$DEB_COUNT" -gt 0 ]; then
@@ -92,7 +146,6 @@ smart_wipe() {
         clean_deb=1
     fi
 
-    # Check systemd journal logs
     local LOG_SZ
     LOG_SZ=$(journalctl --disk-usage 2>/dev/null | grep -o '[0-9\.]\+[KMG]')
     if [ -n "$LOG_SZ" ]; then
@@ -110,7 +163,6 @@ smart_wipe() {
         echo -e " - $itm"
     done
 
-    # Execute cleanup
     echo -e "${BLUE}[*] Wiping...${NC}"
     [ "$clean_npm" -eq 1 ] && { npm cache clean --force 2>/dev/null; rm -rf /root/.npm /root/.node-gyp; }
     [ "$clean_deb" -eq 1 ] && { apt-get clean -y; apt-get autoremove --purge -y; }
@@ -126,23 +178,45 @@ main_menu() {
         echo "======================================"
         echo "          NodejsEasy Manager          "
         echo "======================================"
-        echo " 1) Node.js Environment"
-        
-        # Discover all .sh app scripts in the same directory
-        local app_files=()
-        local idx=2
+        if is_node_installed; then
+            echo -e " Node.js State : ${GREEN}Installed ($(node -v))${NC}"
+        else
+            echo -e " Node.js State : ${RED}Not Installed${NC}"
+        fi
+        echo "--------------------------------------"
+        echo " 1) Node js"
+
+        # Categorize apps into Installed vs Others (Instant local check)
+        local installed_files=()
+        local uninstalled_files=()
+
         for f in "$SCRIPT_DIR"/*.sh; do
             if [ -f "$f" ]; then
-                app_files+=("$f")
-                local base_name
-                base_name=$(basename "$f" .sh)
-                echo " $idx)$base_name"
-                ((idx++))
+                # Load script check function
+                source "$f"
+                if declare -f app_is_installed > /dev/null && app_is_installed; then
+                    installed_files+=("$f")
+                else
+                    uninstalled_files+=("$f")
+                fi
             fi
         done
 
+        # Render installed apps directly on main menu
+        local idx=2
+        for f in "${installed_files[@]}"; do
+            local base_name
+            base_name=$(basename "$f" .sh)
+            echo " $idx) $base_name"
+            ((idx++))
+        done
+
+        local others_idx=$idx
+        echo " $others_idx) others"
+        ((idx++))
+
         local wipe_idx=$idx
-        echo " $wipe_idx) Wipe Caches"
+        echo " $wipe_idx) wipe"
         echo " e) Exit"
         echo "======================================"
         read -p " Select option: " choice
@@ -150,17 +224,19 @@ main_menu() {
         if [[ "$choice" =~ ^[0-9]+$ ]]; then
             if [ "$choice" -eq 1 ]; then
                 node_menu
-            elif [ "$choice" -eq "$wipe_idx" ]; then
-                smart_wipe
-                read -p "Press Enter to continue..."
-            elif [ "$choice" -ge 2 ] && [ "$choice" -lt "$wipe_idx" ]; then
-                local selected_file="${app_files[$((choice - 2))]}"
+            elif [ "$choice" -ge 2 ] && [ "$choice" -lt "$others_idx" ]; then
+                local selected_file="${installed_files[$((choice - 2))]}"
                 if [ -f "$selected_file" ]; then
                     source "$selected_file"
                     if declare -f app_menu > /dev/null; then
                         app_menu
                     fi
                 fi
+            elif [ "$choice" -eq "$others_idx" ]; then
+                others_menu "${uninstalled_files[@]}"
+            elif [ "$choice" -eq "$wipe_idx" ]; then
+                smart_wipe
+                read -p "Press Enter to continue..."
             fi
         elif [[ "$choice" =~ ^[eE]$ ]]; then
             clear
