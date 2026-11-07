@@ -24,7 +24,7 @@ app_is_installed() {
 get_current_port() {
     if [ -f "$SERVICE_FILE" ]; then
         local p
-        p=$(grep -oP '(?<=-p )\d+' "$SERVICE_FILE" 2>/dev/null || grep -oP '(?<=--port )\d+' "$SERVICE_FILE" 2>/dev/null \vert{}\vert{} grep -oP '(?<=PORT=)\d+' "$SERVICE_FILE" 2>/dev/null | head -n1)
+        p=$(grep -oP '(?<=--port )\d+' "$SERVICE_FILE" 2>/dev/null || grep -oP '(?<=-p )\d+' "$SERVICE_FILE" 2>/dev/null || grep -oP '(?<=PORT=)\d+' "$SERVICE_FILE" 2>/dev/null | head -n1)
         [ -n "$p" ] && echo "$p" && return
     fi
     echo "8553"
@@ -65,10 +65,10 @@ generate_systemd_unit() {
         return 1
     fi
 
-    # Fixed non-interactive server flags
-    local exec_cmd="$ROUTER_BIN -p $port -H$host -n --skip-update"
+    # Fixed: Passing explicit --host and -t to prevent interactive TUI exit
+    local exec_cmd="$ROUTER_BIN --port $port --host $host -n -t --skip-update"
     if [ -n "$node_heap" ]; then
-        exec_cmd="$CURRENT_NODE_BIN --max-old-space-size=$node_heap$ROUTER_BIN -p $port -H$host -n --skip-update"
+        exec_cmd="$CURRENT_NODE_BIN --max-old-space-size=$node_heap $ROUTER_BIN --port $port --host $host -n -t --skip-update"
     fi
 
     cat <<SERVICE_EOF > "$SERVICE_FILE"
@@ -132,23 +132,23 @@ app_configure_wizard() {
     local cfg_node_heap=""
     local cfg_cpu=""
 
-    if [[ "$in_adv" =~ ^([yY]\vert{}[yY][eE][sS])$ ]]; then
+    if [[ "$in_adv" =~ ^([yY]|[yY][eE][sS])$ ]]; then
         echo ""
         echo -e "${CLR_MUTED}[Type 'n' to skip/disable any specific limit]${CLR_NC}"
 
-        echo -e " Systemd Hard Memory Limit ${CLR_MUTED}(Default: 450M \vert{} 'n' to skip)${CLR_NC}:"
+        echo -e " Systemd Hard Memory Limit ${CLR_MUTED}(Default: 450M | 'n' to skip)${CLR_NC}:"
         read -p " > " in_mmax
         [[ ! "$in_mmax" =~ ^[nN]$ ]] && cfg_mem_max="${in_mmax:-450M}"
 
-        echo -e " Systemd Throttle Memory Limit ${CLR_MUTED}(Default: 380M \vert{} 'n' to skip)${CLR_NC}:"
+        echo -e " Systemd Throttle Memory Limit ${CLR_MUTED}(Default: 380M | 'n' to skip)${CLR_NC}:"
         read -p " > " in_mhigh
         [[ ! "$in_mhigh" =~ ^[nN]$ ]] && cfg_mem_high="${in_mhigh:-380M}"
 
-        echo -e " Node.js V8 Engine Heap Limit in MB ${CLR_MUTED}(Default: 384 \vert{} 'n' to skip)${CLR_NC}:"
+        echo -e " Node.js V8 Engine Heap Limit in MB ${CLR_MUTED}(Default: 384 | 'n' to skip)${CLR_NC}:"
         read -p " > " in_heap
         [[ ! "$in_heap" =~ ^[nN]$ ]] && cfg_node_heap="${in_heap:-384}"
 
-        echo -e " Maximum CPU Core Quota ${CLR_MUTED}(Default: 80\% \vert{} 'n' to skip)${CLR_NC}:"
+        echo -e " Maximum CPU Core Quota ${CLR_MUTED}(Default: 80% | 'n' to skip)${CLR_NC}:"
         read -p " > " in_cpu
         [[ ! "$in_cpu" =~ ^[nN]$ ]] && cfg_cpu="${in_cpu:-80%}"
     fi
@@ -159,7 +159,7 @@ app_configure_wizard() {
     echo ""
     echo -e " Do you want to manually edit the unit file before starting? [y/N]:"
     read -p " > " in_manual
-    if [[ "$in_manual" =~ ^([yY]\vert{}[yY][eE][sS])$ ]]; then
+    if [[ "$in_manual" =~ ^([yY]|[yY][eE][sS])$ ]]; then
         local editor_bin="${EDITOR:-nano}"
         command -v "$editor_bin" &> /dev/null || editor_bin="vi"
         "$editor_bin" "$SERVICE_FILE"
@@ -168,7 +168,7 @@ app_configure_wizard() {
 
     echo -e "${CLR_BLU}[*] Starting 9router service...${CLR_NC}"
     systemctl restart 9router
-    sleep 3
+    sleep 4
     if systemctl is-active --quiet 9router; then
         echo -e "${CLR_GRN}[+] 9router successfully running with updated settings!${CLR_NC}"
     else
