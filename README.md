@@ -86,4 +86,4 @@ To add another Node.js application to this manager:
 
 The application will be registered as a selectable menu entry automatically on the next run.
 
-```
+
