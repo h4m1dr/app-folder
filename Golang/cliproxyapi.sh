@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# CLIProxyAPI Complete Lifecycle & Deployment Script
-# Integrated with Systemd, Resource Guard, Static Assets & Nginx Reverse Proxy
+# CLIProxyAPI Master Control Panel (Golang Architecture)
 # ==============================================================================
 
 INSTALL_DIR="/opt/cliproxyapi"
@@ -29,7 +28,7 @@ get_version() {
 }
 
 download_and_extract_assets() {
-    echo -e "${CLR_BLU}[*] Checking latest release from GitHub...${CLR_NC}"
+    echo -e "${CLR_BLU}[*] Fetching latest release from GitHub...${CLR_NC}"
     local tmp_dir="/tmp/cliproxy_setup"
     local tmp_tar="/tmp/cliproxy_latest.tar.gz"
     rm -rf "$tmp_dir" "$tmp_tar"
@@ -42,16 +41,14 @@ download_and_extract_assets() {
         download_url="https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/CLIProxyAPI_linux_amd64.tar.gz"
     fi
 
-    echo -e "${CLR_BLU}[*] Downloading package archive...${CLR_NC}"
     if ! curl -fL "$download_url" -o "$tmp_tar"; then
-        echo -e "${CLR_RED}[!] Download failed. Check network or proxy.${CLR_NC}"
+        echo -e "${CLR_RED}[!] Download failed. Check server network.${CLR_NC}"
         rm -rf "$tmp_dir" "$tmp_tar"
         return 1
     fi
 
     tar -xzf "$tmp_tar" -C "$tmp_dir"
 
-    # پیدا کردن و نصب فایل باینری واقعی Go
     local bin_source
     bin_source=$(find "$tmp_dir" -maxdepth 2 -type f -exec file {} + | grep "ELF 64-bit" | cut -d: -f1 | head -n 1)
 
@@ -59,20 +56,18 @@ download_and_extract_assets() {
         systemctl stop cliproxyapi 2>/dev/null
         mv "$bin_source" "$BIN_PATH"
         chmod +x "$BIN_PATH"
-        echo -e "${CLR_GRN}[+] Binary installed to $BIN_PATH${CLR_NC}"
+        echo -e "${CLR_GRN}[+] Core binary updated at $BIN_PATH${CLR_NC}"
     else
-        echo -e "${CLR_RED}[!] Could not locate valid ELF binary in package.${CLR_NC}"
+        echo -e "${CLR_RED}[!] Valid executable not found in package.${CLR_NC}"
         rm -rf "$tmp_dir" "$tmp_tar"
         return 1
     fi
 
-    # انتقال فایل‌های استاتیک فرانت‌اند و قالب مدیریت
     local static_source
     static_source=$(find "$tmp_dir" -type d -name "static" | head -n 1)
     if [ -n "$static_source" ] && [ -d "$static_source" ]; then
         cp -r "$static_source"/* "$STATIC_DIR/" 2>/dev/null
     fi
-
     find "$tmp_dir" -maxdepth 2 -name "*.html" -exec cp {} "$STATIC_DIR/" \; 2>/dev/null
 
     rm -rf "$tmp_dir" "$tmp_tar"
@@ -82,6 +77,14 @@ download_and_extract_assets() {
 setup_systemd() {
     local mem_limit="$1"
     local cpu_limit="$2"
+
+    local limits_block=""
+    if [ -n "$mem_limit" ] && [ "$mem_limit" != "none" ]; then
+        limits_block+="MemoryMax=$mem_limit"$'\n'
+    fi
+    if [ -n "$cpu_limit" ] && [ "$cpu_limit" != "none" ]; then
+        limits_block+="CPUQuota=$cpu_limit"$'\n'
+    fi
 
     cat <<EOF > "$SERVICE_FILE"
 [Unit]
@@ -96,11 +99,7 @@ ExecStart=$BIN_PATH -config $CONFIG_FILE
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
-
-# Resource Security & Limits
-MemoryMax=$mem_limit
-CPUQuota=$cpu_limit
-
+$limits_block
 StandardOutput=journal
 StandardError=journal
 
@@ -120,7 +119,7 @@ setup_nginx_domain() {
         return 0
     fi
 
-    echo -e "${CLR_BLU}[*] Configuring Nginx reverse proxy for $domain...${CLR_NC}"
+    echo -e "${CLR_BLU}[*] Deploying Nginx server block for $domain...${CLR_NC}"
     local nginx_file="/etc/nginx/sites-available/$domain"
 
     cat <<EOF > "$nginx_file"
@@ -165,20 +164,15 @@ server {
 EOF
 
     ln -sf "$nginx_file" "/etc/nginx/sites-enabled/$domain"
-
     if nginx -t >/dev/null 2>&1; then
         systemctl reload nginx
-        echo -e "${CLR_GRN}[+] Nginx configured and reloaded successfully.${CLR_NC}"
+        echo -e "${CLR_GRN}[+] Nginx configuration active.${CLR_NC}"
     else
-        echo -e "${CLR_RED}[!] Nginx syntax error. Please verify SSL paths or domain block.${CLR_NC}"
+        echo -e "${CLR_RED}[!] Nginx syntax error. Check configuration manual.${CLR_NC}"
     fi
 }
 
-install_wizard() {
-    mkdir -p "$INSTALL_DIR"
-
-    download_and_extract_assets || return 1
-
+reconfigure_wizard() {
     echo ""
     echo -e "${CLR_CYN}====================================================${CLR_NC}"
     echo -e "${CLR_CYN}     Phase 1: Basic Server Configuration            ${CLR_NC}"
@@ -189,60 +183,81 @@ install_wizard() {
     read -p " Listening Port [Default: 8085]: " in_port
     local port="${in_port:-8085}"
 
-    read -p " Admin Auth Secret Key [Default: admin123456]: " in_key
+    read -p " Management Secret Key [Default: admin123456]: " in_key
     local key="${in_key:-admin123456}"
 
-    echo ""
-    echo -e "${CLR_CYN}====================================================${CLR_NC}"
-    echo -e "${CLR_CYN}     Phase 2: Advanced Application Settings         ${CLR_NC}"
-    echo -e "${CLR_CYN}====================================================${CLR_NC}"
-    echo " Select Log Level:"
-    echo " 1) info (Default)"
-    echo " 2) debug (Verbose)"
-    echo " 3) warn"
-    echo " 4) error"
-    read -p " Selection [1-4, Default: 1]: " in_log
     local log_level="info"
-    case $in_log in
-        2) log_level="debug" ;;
-        3) log_level="warn" ;;
-        4) log_level="error" ;;
-        *) log_level="info" ;;
-    esac
+    read -p " Would you like to enter Advanced Settings? [y/N]: " adv_choice
+    if [[ "$adv_choice" =~ ^[yY]$ ]]; then
+        echo ""
+        echo " Select Log Level:"
+        echo " 1) info (Default)"
+        echo " 2) debug (Verbose)"
+        echo " 3) warn"
+        echo " 4) error"
+        read -p " Selection [1-4, Default: 1]: " in_log
+        case $in_log in
+            2) log_level="debug" ;;
+            3) log_level="warn" ;;
+            4) log_level="error" ;;
+            *) log_level="info" ;;
+        esac
+    fi
 
+    # نوشتن هر دو کلید management_key و auth_key برای پشتیبانی کامل
     cat <<EOF > "$CONFIG_FILE"
 host: "$host"
 port: $port
+management_key: "$key"
 auth_key: "$key"
 log_level: "$log_level"
 EOF
 
-    echo ""
-    echo -e "${CLR_CYN}====================================================${CLR_NC}"
-    echo -e "${CLR_CYN}     Phase 3: System Resource Control & Limits      ${CLR_NC}"
-    echo -e "${CLR_CYN}====================================================${CLR_NC}"
-    read -p " Maximum Memory Limit (e.g. 256M, 512M) [Default: 256M]: " in_mem
-    local mem_limit="${in_mem:-256M}"
+    local mem_limit=""
+    local cpu_limit=""
+    read -p " Would you like to configure System Resource Limits? [y/N]: " res_choice
+    if [[ "$res_choice" =~ ^[yY]$ ]]; then
+        read -p " Memory Limit (e.g. 256M, 512M or 'n' for none) [Default: 256M]: " in_mem
+        in_mem="${in_mem:-256M}"
+        if [[ "$in_mem" =~ ^[nN]$ ]]; then
+            mem_limit=""
+        else
+            mem_limit="$in_mem"
+        fi
 
-    read -p " CPU Quota percentage (e.g. 50%, 100%) [Default: 100%]: " in_cpu
-    local cpu_limit="${in_cpu:-100%}"
-
-    setup_systemd "$mem_limit" "$cpu_limit"
-    systemctl restart cliproxyapi
-
-    echo ""
-    echo -e "${CLR_CYN}====================================================${CLR_NC}"
-    echo -e "${CLR_CYN}     Phase 4: Domain & Nginx Reverse Proxy Setup    ${CLR_NC}"
-    echo -e "${CLR_CYN}====================================================${CLR_NC}"
-    read -p " Configure Domain for Nginx? (e.g. 9c.ykno.ir) [Press Enter to skip]: " in_domain
-    if [ -n "$in_domain" ]; then
-        setup_nginx_domain "$in_domain" "$port"
+        read -p " CPU Quota (e.g. 100%, 150% or 'n' for none) [Default: 100%]: " in_cpu
+        in_cpu="${in_cpu:-100%}"
+        if [[ "$in_cpu" =~ ^[nN]$ ]]; then
+            cpu_limit=""
+        else
+            cpu_limit="$in_cpu"
+        fi
     fi
 
-    echo ""
-    echo -e "${CLR_GRN}[+] CLIProxyAPI successfully deployed and active!${CLR_NC}"
-    echo -e " Backend : ${CLR_YLW}http://$host:$port${CLR_NC}"
-    [ -n "$in_domain" ] && echo -e " Web UI  : ${CLR_YLW}https://$in_domain/management.html${CLR_NC}"
+    setup_systemd "$mem_limit" "$cpu_limit"
+
+    read -p " Would you like to configure Nginx Domain? [y/N]: " dom_choice
+    if [[ "$dom_choice" =~ ^[yY]$ ]]; then
+        read -p " Enter Domain (e.g. 9c.ykno.ir): " in_domain
+        [ -n "$in_domain" ] && setup_nginx_domain "$in_domain" "$port"
+    fi
+
+    systemctl restart cliproxyapi
+    echo -e "${CLR_GRN}[+] Settings successfully applied!${CLR_NC}"
+}
+
+install_fresh() {
+    mkdir -p "$INSTALL_DIR"
+    download_and_extract_assets || return 1
+    reconfigure_wizard
+}
+
+update_only() {
+    echo -e "${CLR_BLU}[*] Updating CLIProxyAPI binary without touching configurations...${CLR_NC}"
+    if download_and_extract_assets; then
+        systemctl restart cliproxyapi
+        echo -e "${CLR_GRN}[+] CLIProxyAPI updated and service restarted successfully.${CLR_NC}"
+    fi
 }
 
 edit_config() {
@@ -294,48 +309,56 @@ while true; do
     fi
     echo -e "${CLR_CYN}------------------------------------------------------${CLR_NC}"
     if [ ! -f "$BIN_PATH" ]; then
-        echo " 1) Install CLIProxyAPI (Full Wizard)"
+        echo " 1) Install CLIProxyAPI"
     else
-        echo " 1) Update / Re-run Setup Wizard"
+        echo " 1) Update Binary Only (Keep Config)"
+        echo " 2) Re-configure Settings & Limits"
     fi
-    echo " 2) Start Service"
-    echo " 3) Stop Service"
-    echo " 4) Restart Service"
-    echo " 5) View Real-Time Status & Logs"
-    echo " 6) Edit Application Config (config.yaml)"
-    echo " 7) Edit Systemd Service & Limits (cliproxyapi.service)"
-    echo " 8) Uninstall & Clean Everything"
+    echo " 3) Start Service"
+    echo " 4) Stop Service"
+    echo " 5) Restart Service"
+    echo " 6) View Real-Time Status & Logs"
+    echo " 7) Edit Application Config (config.yaml)"
+    echo " 8) Edit Systemd Service & Limits (cliproxyapi.service)"
+    echo " 9) Uninstall & Clean Everything"
     echo ""
     echo -e " ${CLR_ORG}b) Back${CLR_NC}"
     echo -e "${CLR_CYN}------------------------------------------------------${CLR_NC}"
-    read -p " Select an option [1-8, b]: " opt
+    read -p " Select an option: " opt
     case $opt in
         1)
-            install_wizard
-            read -p "Press Enter to return to menu..." ;;
+            if [ ! -f "$BIN_PATH" ]; then
+                install_fresh
+            else
+                update_only
+            fi
+            read -p "Press Enter to continue..." ;;
         2)
+            reconfigure_wizard
+            read -p "Press Enter to continue..." ;;
+        3)
             systemctl start cliproxyapi
             echo -e "${CLR_GRN}[+] Service started.${CLR_NC}"
             read -p "Press Enter to continue..." ;;
-        3)
+        4)
             systemctl stop cliproxyapi
             echo -e "${CLR_YLW}[*] Service stopped.${CLR_NC}"
             read -p "Press Enter to continue..." ;;
-        4)
+        5)
             systemctl restart cliproxyapi
             echo -e "${CLR_GRN}[+] Service restarted.${CLR_NC}"
             read -p "Press Enter to continue..." ;;
-        5)
+        6)
             echo -e "${CLR_BLU}[*] Displaying logs (Press Ctrl+C to exit)...${CLR_NC}"
             journalctl -u cliproxyapi -n 35 -f --no-pager
             read -p "Press Enter to continue..." ;;
-        6)
+        7)
             edit_config
             read -p "Press Enter to continue..." ;;
-        7)
+        8)
             edit_service
             read -p "Press Enter to continue..." ;;
-        8)
+        9)
             read -p " Are you sure you want to completely remove CLIProxyAPI? [y/N]: " conf
             if [[ "$conf" =~ ^[yY]$ ]]; then
                 systemctl stop cliproxyapi 2>/dev/null
