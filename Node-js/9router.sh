@@ -4,7 +4,6 @@ APP_NAME="9router"
 ROUTER_PORT="8553"
 SERVICE_FILE="/etc/systemd/system/9router.service"
 
-# Returns 0 if natively installed, 1 if not installed
 app_is_installed() {
     if command -v 9router &> /dev/null || [ -f "$SERVICE_FILE" ]; then
         return 0
@@ -12,7 +11,6 @@ app_is_installed() {
     return 1
 }
 
-# Resolve local Node.js runtime
 resolve_runtime() {
     if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
         echo -e "\033[0;31m[!] Node.js runtime not found.\033[0m"
