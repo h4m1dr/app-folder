@@ -1,26 +1,35 @@
 #!/usr/bin/env bash
 
-# Application configuration
 APP_NAME="9router"
-ROUTER_PORT="8553"
 SERVICE_FILE="/etc/systemd/system/9router.service"
 
+CLR_RED='\033[0;31m'
+CLR_GRN='\033[0;32m'
+CLR_YLW='\033[1;33m'
+CLR_BLU='\033[0;34m'
+CLR_ORG='\033[38;5;208m'
+CLR_NC='\033[0m'
+
 app_is_installed() {
-    if [ -f "$SERVICE_FILE" ]; then
-        return 0
-    fi
+    [ -f "$SERVICE_FILE" ] && return 0
     return 1
+}
+
+get_current_port() {
+    if [ -f "$SERVICE_FILE" ]; then
+        local p
+        p=$(grep -oP '(?<=--port )\d+' "$SERVICE_FILE" 2>/dev/null || grep -oP '(?<=PORT=)\d+' "$SERVICE_FILE" 2>/dev/null | head -n1)
+        [ -n "$p" ] && echo "$p" && return
+    fi
+    echo "8553"
 }
 
 get_app_version() {
     if command -v 9router &> /dev/null; then
         local ver
-        ver=$(9router --version 2>/dev/null || 9router -v 2>/dev/null)
-        if [ -n "$ver" ]; then
-            echo "$ver"
-        else
-            echo "Installed (CLI detected)"
-        fi
+        ver=$(9router -v 2>/dev/null || 9router --version 2>/dev/null)
+        [ -n "$ver" ] && echo "$ver" && return
+        echo "Installed"
     else
         echo "Not Installed"
     fi
@@ -28,7 +37,7 @@ get_app_version() {
 
 resolve_runtime() {
     if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
-        echo -e "\033[0;31m[!] Node.js runtime not found.\033[0m"
+        echo -e "${CLR_RED}[!] Node.js runtime not found.${CLR_NC}"
         return 1
     fi
     CURRENT_NODE_BIN=$(which node)
@@ -37,21 +46,25 @@ resolve_runtime() {
 
 app_install() {
     if ! resolve_runtime; then
-        echo -e "\033[0;31m[!] Please install Node.js first.\033[0m"
+        echo -e "${CLR_RED}[!] Please install Node.js first.${CLR_NC}"
         return
     fi
 
-    echo -e "\033[0;34m[*] Installing 9router globally via npm...\033[0m"
+    echo ""
+    read -p " Enter Port for 9router [Default: 8553]: " input_port
+    ROUTER_PORT="${input_port:-8553}"
+
+    echo -e "${CLR_BLU}[*] Installing 9router globally via npm...${CLR_NC}"
     npm install -g 9router
 
     local ROUTER_BIN
     ROUTER_BIN=$(which 9router 2>/dev/null)
     if [ -z "$ROUTER_BIN" ]; then
-        echo -e "\033[0;31m[!] 9router binary not found in PATH.\033[0m"
+        echo -e "${CLR_RED}[!] 9router binary not found in PATH.${CLR_NC}"
         return
     fi
 
-    echo -e "\033[0;34m[*] Setting up systemd unit on port $ROUTER_PORT...\033[0m"
+    echo -e "${CLR_BLU}[*] Generating systemd unit on port $ROUTER_PORT...${CLR_NC}"
     cat <<SERVICE_EOF > "$SERVICE_FILE"
 [Unit]
 Description=9router Gateway Service
@@ -73,26 +86,55 @@ SERVICE_EOF
 
     systemctl daemon-reload
     systemctl enable --now 9router
-    sleep 2
+    sleep 1
     if systemctl is-active --quiet 9router; then
-        echo -e "\033[0;32m[+] 9router successfully running on port $ROUTER_PORT\033[0m"
+        echo -e "${CLR_GRN}[+] 9router successfully running on port $ROUTER_PORT${CLR_NC}"
     else
-        echo -e "\033[0;31m[!] Failed to start service. Check logs via option 5.\033[0m"
+        echo -e "${CLR_RED}[!] Failed to start service. Check: option 6 (Status & Logs)${CLR_NC}"
+    fi
+}
+
+app_edit_config() {
+    if ! app_is_installed; then
+        echo -e "${CLR_RED}[!] 9router is not installed yet.${CLR_NC}"
+        return
+    fi
+
+    echo -e "${CLR_YLW}[*] Stopping 9router service before editing...${CLR_NC}"
+    systemctl stop 9router 2>/dev/null
+
+    local editor_bin="${EDITOR:-nano}"
+    command -v "$editor_bin" &> /dev/null || editor_bin="vi"
+    "$editor_bin" "$SERVICE_FILE"
+
+    echo -e "${CLR_BLU}[*] Reloading systemd daemon...${CLR_NC}"
+    systemctl daemon-reload
+
+    echo -e "${CLR_BLU}[*] Starting 9router service...${CLR_NC}"
+    if systemctl start 9router; then
+        sleep 1
+        if systemctl is-active --quiet 9router; then
+            echo -e "${CLR_GRN}[+] 9router service restarted successfully.${CLR_NC}"
+        else
+            echo -e "${CLR_RED}[!] Service failed after edits. Inspect option 6 (Status & Logs).${CLR_NC}"
+        fi
+    else
+        echo -e "${CLR_RED}[!] Syntax/Systemd error detected. Check option 6 (Status & Logs).${CLR_NC}"
     fi
 }
 
 app_update() {
     if ! app_is_installed; then
-        echo -e "\033[0;31m[!] 9router is not installed yet. Please install it first.\033[0m"
+        echo -e "${CLR_RED}[!] 9router is not installed yet.${CLR_NC}"
         return
     fi
     if ! resolve_runtime; then
         return
     fi
-    echo -e "\033[0;34m[*] Updating 9router to latest version...\033[0m"
+    echo -e "${CLR_BLU}[*] Updating 9router to latest version...${CLR_NC}"
     npm install -g 9router@latest
     systemctl restart 9router
-    echo -e "\033[0;32m[+] 9router updated and service restarted.\033[0m"
+    echo -e "${CLR_GRN}[+] 9router updated and service restarted.${CLR_NC}"
 }
 
 app_status() {
@@ -101,62 +143,62 @@ app_status() {
     echo "       9Router Status & Logs          "
     echo "======================================"
     if ! app_is_installed; then
-        echo -e "\033[0;31m[!] 9router service is not installed.\033[0m"
+        echo -e "${CLR_RED}[!] 9router service is not installed.${CLR_NC}"
         return
     fi
 
-    echo -e "\033[0;34m[*] Systemd Service Status:\033[0m"
+    echo -e "${CLR_BLU}[*] Service Status:${CLR_NC}"
     systemctl status 9router --no-pager
     echo ""
-    echo -e "\033[0;34m[*] Recent Journal Logs & Errors (last 30 lines):\033[0m"
+    echo -e "${CLR_BLU}[*] Recent Logs (30 lines):${CLR_NC}"
     journalctl -u 9router -n 30 --no-pager
 }
 
 app_start() {
     if ! app_is_installed; then
-        echo -e "\033[0;31m[!] 9router is not installed. Unit file missing.\033[0m"
+        echo -e "${CLR_RED}[!] 9router is not installed.${CLR_NC}"
         return
     fi
     if systemctl start 9router; then
-        echo -e "\033[0;32m[+] 9router service started.\033[0m"
+        echo -e "${CLR_GRN}[+] 9router service started.${CLR_NC}"
     else
-        echo -e "\033[0;31m[!] Failed to start 9router service.\033[0m"
+        echo -e "${CLR_RED}[!] Failed to start 9router service.${CLR_NC}"
     fi
 }
 
 app_stop() {
     if ! app_is_installed; then
-        echo -e "\033[0;31m[!] 9router is not installed.\033[0m"
+        echo -e "${CLR_RED}[!] 9router is not installed.${CLR_NC}"
         return
     fi
     if systemctl stop 9router; then
-        echo -e "\033[1;33m[*] 9router service stopped.\033[0m"
+        echo -e "${CLR_YLW}[*] 9router service stopped.${CLR_NC}"
     else
-        echo -e "\033[0;31m[!] Failed to stop 9router service.\033[0m"
+        echo -e "${CLR_RED}[!] Failed to stop 9router service.${CLR_NC}"
     fi
 }
 
 app_restart() {
     if ! app_is_installed; then
-        echo -e "\033[0;31m[!] 9router is not installed.\033[0m"
+        echo -e "${CLR_RED}[!] 9router is not installed.${CLR_NC}"
         return
     fi
     if systemctl restart 9router; then
-        echo -e "\033[0;32m[+] 9router service restarted.\033[0m"
+        echo -e "${CLR_GRN}[+] 9router service restarted.${CLR_NC}"
     else
-        echo -e "\033[0;31m[!] Failed to restart 9router service.\033[0m"
+        echo -e "${CLR_RED}[!] Failed to restart 9router service.${CLR_NC}"
     fi
 }
 
 app_delete() {
-    echo -e "\033[0;31m[!] Removing 9router service and binaries...\033[0m"
+    echo -e "${CLR_RED}[!] Removing 9router service and files...${CLR_NC}"
     systemctl stop 9router 2>/dev/null
     systemctl disable 9router 2>/dev/null
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload
     npm uninstall -g 9router 2>/dev/null
     rm -rf /root/.9router
-    echo -e "\033[0;32m[+] 9router removed completely.\033[0m"
+    echo -e "${CLR_GRN}[+] 9router removed completely.${CLR_NC}"
 }
 
 app_menu() {
@@ -165,15 +207,16 @@ app_menu() {
         echo "======================================"
         echo "           9Router Menu               "
         echo "======================================"
-        local v_info
+        local v_info cur_port
         v_info=$(get_app_version)
+        cur_port=$(get_current_port)
         if app_is_installed; then
-            echo -e " Status  : \033[0;32mInstalled (Active)\033[0m"
-            echo -e " Version : \033[0;34m$v_info\033[0m"
-            echo -e " Port    : \033[0;33m$ROUTER_PORT\033[0m"
+            echo -e " Status  : ${CLR_GRN}Installed (Active)${CLR_NC}"
+            echo -e " Version : ${CLR_BLU}$v_info${CLR_NC}"
+            echo -e " Port    : ${CLR_YLW}$cur_port${CLR_NC}"
         else
-            echo -e " Status  : \033[0;31mNot Installed\033[0m"
-            echo -e " Version : \033[0;31m$v_info\033[0m"
+            echo -e " Status  : ${CLR_RED}Not Installed${CLR_NC}"
+            echo -e " Version : ${CLR_RED}$v_info${CLR_NC}"
         fi
         echo "--------------------------------------"
         echo " 1) Install"
@@ -182,8 +225,11 @@ app_menu() {
         echo " 4) Stop"
         echo " 5) Restart"
         echo " 6) Status & Logs"
-        echo " 7) Delete"
-        echo " b) Back"
+        echo " 7) Edit Config"
+        echo " 8) Delete"
+        echo ""
+        echo -e " ${CLR_ORG}b) Back${CLR_NC}"
+        echo -e " ${CLR_RED}e) Exit${CLR_NC}"
         echo "--------------------------------------"
         read -p " Select option: " choice
         case $choice in
@@ -193,9 +239,11 @@ app_menu() {
             4) app_stop; read -p "Press Enter to continue..." ;;
             5) app_restart; read -p "Press Enter to continue..." ;;
             6) app_status; read -p "Press Enter to continue..." ;;
-            7) app_delete; read -p "Press Enter to continue..." ;;
+            7) app_edit_config; read -p "Press Enter to continue..." ;;
+            8) app_delete; read -p "Press Enter to continue..." ;;
             b|B) break ;;
-            *) ;; # Keep in loop for any other key
+            e|E) clear; exit 0 ;;
+            *) ;;
         esac
     done
 }
