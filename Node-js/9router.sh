@@ -18,10 +18,12 @@ PERM_DIR="/opt/app-folder/Node-js"
 
 CACHED_ROUTER_LATEST=""
 
-# Called only ONCE at start
 app_init_metadata() {
-    if command -v npm &> /dev/null; then
-        CACHED_ROUTER_LATEST=$(npm view 9router version 2>/dev/null)
+    # Only fetch target version once if installed and not cached yet
+    if app_is_installed && [ -z "$CACHED_ROUTER_LATEST" ]; then
+        if command -v npm &> /dev/null; then
+            CACHED_ROUTER_LATEST=$(npm view 9router version 2>/dev/null)
+        fi
     fi
 }
 
@@ -39,14 +41,22 @@ get_current_port() {
     echo "8553"
 }
 
-# Renders instantly using memory cache without network calls
+get_current_password() {
+    if [ -f "$SERVICE_FILE" ]; then
+        local pwd
+        pwd=$(grep -oP '(?<=ADMIN_PASSWORD=).*' "$SERVICE_FILE" 2>/dev/null | head -n1)
+        [ -n "$pwd" ] && echo "$pwd" && return
+    fi
+    echo "admin123"
+}
+
 get_version_status() {
     if command -v 9router &> /dev/null; then
         local cur_ver
         cur_ver=$(9router -v 2>/dev/null || 9router --version 2>/dev/null)
         [ -z "$cur_ver" ] && cur_ver="Installed"
 
-        if [ -n "$CACHED_ROUTER_LATEST" ] && [ "$cur_ver" != "Installed" ]; then
+        if [ -n "$CACHED_ROUTER_LATEST" ]; then
             if [ "$cur_ver" == "$CACHED_ROUTER_LATEST" ]; then
                 echo -e "${CLR_GRN}$cur_ver ${CLR_MUTED}(latest)${CLR_NC}"
             else
@@ -72,10 +82,11 @@ resolve_runtime() {
 generate_systemd_unit() {
     local port="$1"
     local host="$2"
-    local mem_max="$3"
-    local mem_high="$4"
-    local node_heap="$5"
-    local cpu_quota="$6"
+    local pass="$3"
+    local mem_max="$4"
+    local mem_high="$5"
+    local node_heap="$6"
+    local cpu_quota="$7"
 
     local ROUTER_BIN
     ROUTER_BIN=$(which 9router 2>/dev/null)
@@ -100,6 +111,7 @@ User=root
 WorkingDirectory=/root
 Environment=PORT=$port
 Environment=HOST=$host
+Environment=ADMIN_PASSWORD=$pass
 Environment=CI=true
 Environment=NODE_ENV=production
 Environment=PATH=$(dirname "$CURRENT_NODE_BIN"):$PATH
@@ -130,8 +142,10 @@ app_configure_wizard() {
     echo ""
     echo -e "${CLR_BLU}=== Standard Configuration ===${CLR_NC}"
     
-    local cur_p
+    local cur_p cur_pwd
     cur_p=$(get_current_port)
+    cur_pwd=$(get_current_password)
+
     echo -e " Enter listening Port ${CLR_MUTED}(Default: $cur_p)${CLR_NC}:"
     read -p " > " in_port
     local cfg_port="${in_port:-$cur_p}"
@@ -139,6 +153,10 @@ app_configure_wizard() {
     echo -e " Enter listening Host IP ${CLR_MUTED}(Default: 127.0.0.1)${CLR_NC}:"
     read -p " > " in_host
     local cfg_host="${in_host:-127.0.0.1}"
+
+    echo -e " Enter Web UI Admin Password ${CLR_MUTED}(Default: $cur_pwd)${CLR_NC}:"
+    read -p " > " in_pass
+    local cfg_pass="${in_pass:-$cur_pwd}"
 
     echo ""
     echo -e "${CLR_BLU}=== Advanced Limits (Optional) ===${CLR_NC}"
@@ -172,7 +190,7 @@ app_configure_wizard() {
     fi
 
     echo -e "${CLR_BLU}[*] Generating service unit...${CLR_NC}"
-    generate_systemd_unit "$cfg_port" "$cfg_host" "$cfg_mem_max" "$cfg_mem_high" "$cfg_node_heap" "$cfg_cpu"
+    generate_systemd_unit "$cfg_port" "$cfg_host" "$cfg_pass" "$cfg_mem_max" "$cfg_mem_high" "$cfg_node_heap" "$cfg_cpu"
 
     echo ""
     echo -e " Do you want to manually edit the unit file before starting? [y/N]:"
@@ -186,7 +204,7 @@ app_configure_wizard() {
 
     echo -e "${CLR_BLU}[*] Starting 9router service...${CLR_NC}"
     systemctl restart 9router
-    sleep 4
+    sleep 3
     if systemctl is-active --quiet 9router; then
         echo -e "${CLR_GRN}[+] 9router successfully running with updated settings!${CLR_NC}"
     else
@@ -219,6 +237,7 @@ app_update() {
     echo -e "${CLR_BLU}[*] Updating 9router to latest version...${CLR_NC}"
     npm install -g 9router@latest
     systemctl restart 9router
+    CACHED_ROUTER_LATEST=""
     app_init_metadata
     echo -e "${CLR_GRN}[+] 9router updated and service restarted.${CLR_NC}"
 }
@@ -284,6 +303,7 @@ app_delete() {
     systemctl daemon-reload
     npm uninstall -g 9router 2>/dev/null
     rm -rf /root/.9router
+    CACHED_ROUTER_LATEST=""
     echo -e "${CLR_GRN}[+] 9router removed completely.${CLR_NC}"
 }
 
@@ -312,15 +332,17 @@ app_menu() {
         echo "======================================"
         echo "           9Router Menu               "
         echo "======================================"
-        local cur_port
+        local cur_port cur_pwd
         cur_port=$(get_current_port)
+        cur_pwd=$(get_current_password)
         if app_is_installed; then
-            echo -e " Status  : ${CLR_GRN}Installed (Active)${CLR_NC}"
-            echo -e " Version : $(get_version_status)"
-            echo -e " Port    : ${CLR_YLW}$cur_port${CLR_NC}"
+            echo -e " Status   : ${CLR_GRN}Installed (Active)${CLR_NC}"
+            echo -e " Version  : $(get_version_status)"
+            echo -e " Port     : ${CLR_YLW}$cur_port${CLR_NC}"
+            echo -e " Password : ${CLR_BLU}$cur_pwd${CLR_NC}"
         else
-            echo -e " Status  : ${CLR_RED}Not Installed${CLR_NC}"
-            echo -e " Version : $(get_version_status)"
+            echo -e " Status   : ${CLR_RED}Not Installed${CLR_NC}"
+            echo -e " Version  : $(get_version_status)"
         fi
         echo "--------------------------------------"
         echo " 1) Install"
