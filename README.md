@@ -36,7 +36,7 @@ app-folder/
 Run directly in memory without cloning the full repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js/NodejsEasy | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js/NodejsEasy) </dev/tty
 
 ```
 
