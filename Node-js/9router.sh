@@ -8,6 +8,7 @@ CLR_GRN='\033[0;32m'
 CLR_YLW='\033[1;33m'
 CLR_BLU='\033[0;34m'
 CLR_ORG='\033[38;5;208m'
+CLR_MUTED='\033[90m'
 CLR_NC='\033[0m'
 
 app_is_installed() {
@@ -44,27 +45,27 @@ resolve_runtime() {
     return 0
 }
 
-app_install() {
-    if ! resolve_runtime; then
-        echo -e "${CLR_RED}[!] Please install Node.js first.${CLR_NC}"
-        return
-    fi
-
-    echo ""
-    read -p " Enter Port for 9router [Default: 8553]: " input_port
-    ROUTER_PORT="${input_port:-8553}"
-
-    echo -e "${CLR_BLU}[*] Installing 9router globally via npm...${CLR_NC}"
-    npm install -g 9router
+# Function to build and write the systemd unit file
+generate_systemd_unit() {
+    local port="$1"
+    local host="$2"
+    local mem_max="$3"
+    local mem_high="$4"
+    local node_heap="$5"
+    local cpu_quota="$6"
 
     local ROUTER_BIN
     ROUTER_BIN=$(which 9router 2>/dev/null)
     if [ -z "$ROUTER_BIN" ]; then
         echo -e "${CLR_RED}[!] 9router binary not found in PATH.${CLR_NC}"
-        return
+        return 1
     fi
 
-    echo -e "${CLR_BLU}[*] Generating systemd unit on port $ROUTER_PORT...${CLR_NC}"
+    local exec_cmd="$ROUTER_BIN --port $port"
+    if [ -n "$node_heap" ]; then
+        exec_cmd="$CURRENT_NODE_BIN --max-old-space-size=$node_heap $ROUTER_BIN --port $port"
+    fi
+
     cat <<SERVICE_EOF > "$SERVICE_FILE"
 [Unit]
 Description=9router Gateway Service
@@ -73,25 +74,114 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=$ROUTER_BIN --port $ROUTER_PORT
+ExecStart=$exec_cmd
 Restart=always
 RestartSec=3
-Environment=PORT=$ROUTER_PORT
-Environment=HOST=127.0.0.1
+Environment=PORT=$port
+Environment=HOST=$host
+Environment=NODE_ENV=production
 Environment=PATH=$(dirname "$CURRENT_NODE_BIN"):$PATH
+SERVICE_EOF
+
+    # Inject optional resource limits if provided
+    [ -n "$mem_max" ] && echo "MemoryMax=$mem_max" >> "$SERVICE_FILE"
+    [ -n "$mem_high" ] && echo "MemoryHigh=$mem_high" >> "$SERVICE_FILE"
+    [ -n "$cpu_quota" ] && echo "CPUQuota=$cpu_quota" >> "$SERVICE_FILE"
+    [ -n "$mem_max" ] && echo "TasksMax=100" >> "$SERVICE_FILE"
+
+    cat <<SERVICE_EOF >> "$SERVICE_FILE"
 
 [Install]
 WantedBy=multi-user.target
 SERVICE_EOF
 
     systemctl daemon-reload
-    systemctl enable --now 9router
-    sleep 1
-    if systemctl is-active --quiet 9router; then
-        echo -e "${CLR_GRN}[+] 9router successfully running on port $ROUTER_PORT${CLR_NC}"
-    else
-        echo -e "${CLR_RED}[!] Failed to start service. Check: option 6 (Status & Logs)${CLR_NC}"
+    return 0
+}
+
+app_configure_wizard() {
+    echo ""
+    echo -e "${CLR_BLU}=== Standard Configuration ===${CLR_NC}"
+    
+    # 1. Port setup
+    local cur_p
+    cur_p=$(get_current_port)
+    echo -e " Enter listening Port ${CLR_MUTED}(Default: $cur_p)${CLR_NC}:"
+    read -p " > " in_port
+    local cfg_port="${in_port:-$cur_p}"
+
+    # 2. Host setup
+    echo -e " Enter listening Host IP ${CLR_MUTED}(Default: 127.0.0.1)${CLR_NC}:"
+    read -p " > " in_host
+    local cfg_host="${in_host:-127.0.0.1}"
+
+    # 3. Advanced setup prompt
+    echo ""
+    echo -e "${CLR_BLU}=== Advanced Limits (Optional) ===${CLR_NC}"
+    echo -e " Do you want to configure memory & CPU constraints? [y/N]:"
+    read -p " > " in_adv
+
+    local cfg_mem_max=""
+    local cfg_mem_high=""
+    local cfg_node_heap=""
+    local cfg_cpu=""
+
+    if [[ "$in_adv" =~ ^([yY]|[yY][eE][sS])$ ]]; then
+        echo ""
+        echo -e "${CLR_MUTED}[Type 'n' to skip/disable any specific limit]${CLR_NC}"
+
+        # MemoryMax
+        echo -e " Systemd Hard Memory Limit ${CLR_MUTED}(Default: 450M | 'n' to skip)${CLR_NC}:"
+        read -p " > " in_mmax
+        if [[ ! "$in_mmax" =~ ^[nN]$ ]]; then
+            cfg_mem_max="${in_mmax:-450M}"
+        fi
+
+        # MemoryHigh
+        echo -e " Systemd Throttle Memory Limit ${CLR_MUTED}(Default: 380M | 'n' to skip)${CLR_NC}:"
+        read -p " > " in_mhigh
+        if [[ ! "$in_mhigh" =~ ^[nN]$ ]]; then
+            cfg_mem_high="${in_mhigh:-380M}"
+        fi
+
+        # Node Heap Limit
+        echo -e " Node.js V8 Engine Heap Limit in MB ${CLR_MUTED}(Default: 384 | 'n' to skip)${CLR_NC}:"
+        read -p " > " in_heap
+        if [[ ! "$in_heap" =~ ^[nN]$ ]]; then
+            cfg_node_heap="${in_heap:-384}"
+        fi
+
+        # CPU Quota
+        echo -e " Maximum CPU Core Quota ${CLR_MUTED}(Default: 80% | 'n' to skip)${CLR_NC}:"
+        read -p " > " in_cpu
+        if [[ ! "$in_cpu" =~ ^[nN]$ ]]; then
+            cfg_cpu="${in_cpu:-80%}"
+        fi
     fi
+
+    echo -e "${CLR_BLU}[*] Applying configuration and updating service...${CLR_NC}"
+    if generate_systemd_unit "$cfg_port" "$cfg_host" "$cfg_mem_max" "$cfg_mem_high" "$cfg_node_heap" "$cfg_cpu"; then
+        systemctl restart 9router
+        sleep 1
+        if systemctl is-active --quiet 9router; then
+            echo -e "${CLR_GRN}[+] 9router successfully running with updated settings!${CLR_NC}"
+        else
+            echo -e "${CLR_RED}[!] Service failed to start. Check option 6 (Status & Logs).${CLR_NC}"
+        fi
+    fi
+}
+
+app_install() {
+    if ! resolve_runtime; then
+        echo -e "${CLR_RED}[!] Please install Node.js first.${CLR_NC}"
+        return
+    fi
+
+    echo -e "${CLR_BLU}[*] Installing 9router globally via npm...${CLR_NC}"
+    npm install -g 9router
+
+    app_configure_wizard
+    systemctl enable 9router 2>/dev/null
 }
 
 app_edit_config() {
@@ -99,33 +189,17 @@ app_edit_config() {
         echo -e "${CLR_RED}[!] 9router is not installed yet.${CLR_NC}"
         return
     fi
-
-    echo -e "${CLR_YLW}[*] Stopping 9router service before editing...${CLR_NC}"
-    systemctl stop 9router 2>/dev/null
-
-    local editor_bin="${EDITOR:-nano}"
-    command -v "$editor_bin" &> /dev/null || editor_bin="vi"
-    "$editor_bin" "$SERVICE_FILE"
-
-    echo -e "${CLR_BLU}[*] Reloading systemd daemon...${CLR_NC}"
-    systemctl daemon-reload
-
-    echo -e "${CLR_BLU}[*] Starting 9router service...${CLR_NC}"
-    if systemctl start 9router; then
-        sleep 1
-        if systemctl is-active --quiet 9router; then
-            echo -e "${CLR_GRN}[+] 9router service restarted successfully.${CLR_NC}"
-        else
-            echo -e "${CLR_RED}[!] Service failed after edits. Inspect option 6 (Status & Logs).${CLR_NC}"
-        fi
-    else
-        echo -e "${CLR_RED}[!] Syntax/Systemd error detected. Check option 6 (Status & Logs).${CLR_NC}"
+    if ! resolve_runtime; then
+        return
     fi
+
+    echo -e "${CLR_YLW}[*] Initiating 9router configuration wizard...${CLR_NC}"
+    app_configure_wizard
 }
 
 app_update() {
     if ! app_is_installed; then
-        echo -e "${CLR_RED}[!] 9router is not installed yet.${CLR_NC}"
+        echo -e "${CLR_RED}[!] 9router is not installed yet. Please install it first.${CLR_NC}"
         return
     fi
     if ! resolve_runtime; then
@@ -221,11 +295,11 @@ app_menu() {
         echo "--------------------------------------"
         echo " 1) Install"
         echo " 2) Update"
-        echo " 3) Start"
-        echo " 4) Stop"
-        echo " 5) Restart"
-        echo " 6) Status & Logs"
-        echo " 7) Edit Config"
+        echo " 3) Edit Config & Limits"
+        echo " 4) Start"
+        echo " 5) Stop"
+        echo " 6) Restart"
+        echo " 7) Status & Logs"
         echo " 8) Delete"
         echo ""
         echo -e " ${CLR_ORG}b) Back${CLR_NC}"
@@ -235,11 +309,11 @@ app_menu() {
         case $choice in
             1) app_install; read -p "Press Enter to continue..." ;;
             2) app_update; read -p "Press Enter to continue..." ;;
-            3) app_start; read -p "Press Enter to continue..." ;;
-            4) app_stop; read -p "Press Enter to continue..." ;;
-            5) app_restart; read -p "Press Enter to continue..." ;;
-            6) app_status; read -p "Press Enter to continue..." ;;
-            7) app_edit_config; read -p "Press Enter to continue..." ;;
+            3) app_edit_config; read -p "Press Enter to continue..." ;;
+            4) app_start; read -p "Press Enter to continue..." ;;
+            5) app_stop; read -p "Press Enter to continue..." ;;
+            6) app_restart; read -p "Press Enter to continue..." ;;
+            7) app_status; read -p "Press Enter to continue..." ;;
             8) app_delete; read -p "Press Enter to continue..." ;;
             b|B) break ;;
             e|E) clear; exit 0 ;;
