@@ -21,7 +21,6 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Ultra-fast local check without calling apt/dpkg repeatedly
 ensure_system_deps() {
     [ -f "/usr/lib/x86_64-linux-gnu/libatomic.so.1" ] || [ -f "/usr/lib/libatomic.so.1" ] && return 0
     echo -e "${CLR_BLU}[*] Resolving runtime dependencies (libatomic1)...${CLR_NC}"
@@ -35,12 +34,40 @@ is_node_installed() {
     return 1
 }
 
-# Fast local version checking without blocking network requests
+# ================= One-Time Initialization (No Loop Lag) =================
+TARGET_NODE_VER=""
+TARGET_NPM_VER=""
+
+init_runtime_metadata() {
+    echo -e "${CLR_MUTED}[*] Checking target updates for your system environment...${CLR_NC}"
+
+    # Load NVM once if available
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        source "$HOME/.nvm/nvm.sh" 2>/dev/null
+        TARGET_NODE_VER=$(nvm version-remote --lts 2>/dev/null)
+    fi
+
+    # Fallback if offline or NVM wasn't found
+    local cur_node
+    cur_node=$(node -v 2>/dev/null)
+    [ -z "$TARGET_NODE_VER" ] || [ "$TARGET_NODE_VER" == "N/A" ] && TARGET_NODE_VER="$cur_node"
+
+    # Query matching NPM target release once
+    if command -v npm &> /dev/null; then
+        TARGET_NPM_VER=$(npm view npm version 2>/dev/null)
+        [ -z "$TARGET_NPM_VER" ] && TARGET_NPM_VER=$(npm -v 2>/dev/null)
+    fi
+}
+
 get_node_version_status() {
     if is_node_installed; then
         local cur_v
         cur_v=$(node -v 2>/dev/null)
-        echo -e "${CLR_GRN}$cur_v${CLR_NC}"
+        if [ -n "$TARGET_NODE_VER" ] && [ "$cur_v" != "$TARGET_NODE_VER" ]; then
+            echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}-> ${CLR_GRN}$TARGET_NODE_VER${CLR_NC}"
+        else
+            echo -e "${CLR_GRN}$cur_v ${CLR_MUTED}(latest)${CLR_NC}"
+        fi
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
     fi
@@ -50,7 +77,11 @@ get_npm_version_status() {
     if command -v npm &> /dev/null; then
         local cur_npm
         cur_npm=$(npm -v 2>/dev/null)
-        echo -e "${CLR_GRN}$cur_npm${CLR_NC}"
+        if [ -n "$TARGET_NPM_VER" ] && [ "$cur_npm" != "$TARGET_NPM_VER" ]; then
+            echo -e "${CLR_YLW}$cur_npm ${CLR_MUTED}-> ${CLR_GRN}$TARGET_NPM_VER${CLR_NC}"
+        else
+            echo -e "${CLR_GRN}$cur_npm ${CLR_MUTED}(latest)${CLR_NC}"
+        fi
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
     fi
@@ -68,6 +99,7 @@ node_install() {
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
     apt-get update -y && apt-get install -y nodejs
+    init_runtime_metadata
     echo -e "${CLR_GRN}[+] Node.js installed successfully.${CLR_NC}"
 }
 
@@ -79,7 +111,7 @@ node_update() {
         nvm install --lts --reinstall-packages-from=current 2>/dev/null || true
         local new_ver
         new_ver=$(nvm current 2>/dev/null)
-        if [ -n "$new_ver" ] && [[ "$new_ver" != "none" ]]; then
+        if [ -n "$new_ver" ] && [ "$new_ver" != "none" ]; then
             nvm alias default "$new_ver" >/dev/null 2>&1
             nvm use default >/dev/null 2>&1
         fi
@@ -89,6 +121,7 @@ node_update() {
     fi
 
     npm install -g npm@latest
+    init_runtime_metadata
     echo -e "${CLR_GRN}[+] Active Node: $(which node) ($(node -v))${CLR_NC}"
     echo -e "${CLR_GRN}[+] Active NPM:  $(which npm) ($(npm -v))${CLR_NC}"
 }
@@ -99,6 +132,7 @@ node_delete() {
     apt-get autoremove -y 2>/dev/null
     rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg
     rm -rf /root/.npm /root/.node-gyp /usr/local/lib/node_modules /usr/lib/node_modules
+    init_runtime_metadata
     echo -e "${CLR_GRN}[+] Node.js removed.${CLR_NC}"
 }
 
@@ -279,10 +313,32 @@ others_menu() {
 
 # ================= Dynamic Main Menu =================
 main_menu() {
-    if [ -s "$HOME/.nvm/nvm.sh" ]; then
-        source "$HOME/.nvm/nvm.sh" 2>/dev/null
+    # 1. Fetch remote version metadata once at launch
+    init_runtime_metadata
+
+    # 2. Discover local or cached module scripts once
+    local target_scripts=()
+    for f in "$SCRIPT_DIR"/*.sh; do
+        [ -f "$f" ] && target_scripts+=("$f")
+    done
+
+    if [ ${#target_scripts[@]} -eq 0 ]; then
+        mkdir -p "$CACHE_DIR"
+        for app_script in "${KNOWN_APPS[@]}"; do
+            [ ! -f "$CACHE_DIR/$app_script" ] && curl -fsSL "$REPO_RAW_URL/$app_script" -o "$CACHE_DIR/$app_script" 2>/dev/null
+            [ -f "$CACHE_DIR/$app_script" ] && target_scripts+=("$CACHE_DIR/$app_script")
+        done
     fi
 
+    # Initialize sub-modules once if they support metadata gathering
+    for f in "${target_scripts[@]}"; do
+        if [ -f "$f" ]; then
+            source "$f"
+            declare -f app_init_metadata > /dev/null && app_init_metadata
+        fi
+    done
+
+    # 3. Pure UI rendering loop (zero network requests, instantaneous redraw)
     while true; do
         clear
         echo "======================================"
@@ -295,19 +351,6 @@ main_menu() {
 
         local installed_files=()
         local uninstalled_files=()
-
-        local target_scripts=()
-        for f in "$SCRIPT_DIR"/*.sh; do
-            [ -f "$f" ] && target_scripts+=("$f")
-        done
-
-        if [ ${#target_scripts[@]} -eq 0 ]; then
-            mkdir -p "$CACHE_DIR"
-            for app_script in "${KNOWN_APPS[@]}"; do
-                [ ! -f "$CACHE_DIR/$app_script" ] && curl -fsSL "$REPO_RAW_URL/$app_script" -o "$CACHE_DIR/$app_script" 2>/dev/null
-                [ -f "$CACHE_DIR/$app_script" ] && target_scripts+=("$CACHE_DIR/$app_script")
-            done
-        fi
 
         for f in "${target_scripts[@]}"; do
             if [ -f "$f" ]; then
