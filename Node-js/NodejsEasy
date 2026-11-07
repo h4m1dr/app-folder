@@ -17,6 +17,16 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Ensure required runtime libraries (libatomic1 for modern Node.js versions)
+ensure_system_deps() {
+    if ! dpkg -s libatomic1 &> /dev/null; then
+        echo -e "${BLUE}[*] Resolving missing runtime library (libatomic1)...${NC}"
+        apt-get update -y > /dev/null 2>&1
+        apt-get install -y libatomic1 > /dev/null 2>&1
+    fi
+}
+ensure_system_deps
+
 is_node_installed() {
     if command -v node &> /dev/null; then
         return 0
@@ -31,7 +41,7 @@ node_install() {
         return
     fi
     echo -e "${BLUE}[*] Setting up Node.js repository (LTS)...${NC}"
-    apt-get update -y && apt-get install -y ca-certificates curl gnupg
+    apt-get update -y && apt-get install -y ca-certificates curl gnupg libatomic1
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
@@ -208,7 +218,6 @@ main_menu() {
         if [ ${#target_scripts[@]} -eq 0 ]; then
             mkdir -p /tmp/app-folder-cache
             for app_script in "${KNOWN_APPS[@]}"; do
-                # Always fetch fresh script to reflect recent changes
                 curl -fsSL "$REPO_RAW_URL/$app_script" -o "/tmp/app-folder-cache/$app_script" 2>/dev/null
                 [ -f "/tmp/app-folder-cache/$app_script" ] && target_scripts+=("/tmp/app-folder-cache/$app_script")
             done
