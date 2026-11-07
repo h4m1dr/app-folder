@@ -36,7 +36,7 @@ app-folder/
 Run directly in memory without cloning the full repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/h4m1dr/app-folder/main/node-js/NodejsEasy | bash
+curl -fsSL https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js/NodejsEasy | bash
 
 ```
 
@@ -54,15 +54,15 @@ git clone https://github.com/h4m1dr/app-folder.git /opt/app-folder
 
 2. Make the scripts executable:
 ```bash
-chmod +x /opt/app-folder/node-js/NodejsEasy
-chmod +x /opt/app-folder/node-js/*.sh
+chmod +x /opt/app-folder/Node-js/NodejsEasy
+chmod +x /opt/app-folder/Node-js/*.sh
 
 ```
 
 
 3. Create a global command symlink:
 ```bash
-ln -sf /opt/app-folder/node-js/NodejsEasy /usr/local/bin/nodejs-easy
+ln -sf /opt/app-folder/Node-js/NodejsEasy /usr/local/bin/nodejs-easy
 
 ```
 
