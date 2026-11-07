@@ -7,9 +7,14 @@ CLR_RED='\033[0;31m'
 CLR_GRN='\033[0;32m'
 CLR_YLW='\033[1;33m'
 CLR_BLU='\033[0;34m'
+CLR_CYN='\033[0;36m'
 CLR_ORG='\033[38;5;208m'
 CLR_MUTED='\033[90m'
 CLR_NC='\033[0m'
+
+REPO_RAW_URL="https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js"
+CACHE_DIR="/tmp/app-folder-cache"
+PERM_DIR="/opt/app-folder/Node-js"
 
 app_is_installed() {
     [ -f "$SERVICE_FILE" ] && return 0
@@ -25,14 +30,24 @@ get_current_port() {
     echo "8553"
 }
 
-get_app_version() {
+get_version_status() {
     if command -v 9router &> /dev/null; then
-        local ver
-        ver=$(9router -v 2>/dev/null || 9router --version 2>/dev/null)
-        [ -n "$ver" ] && echo "$ver" && return
-        echo "Installed"
+        local cur_ver latest_ver
+        cur_ver=$(9router -v 2>/dev/null || 9router --version 2>/dev/null)
+        [ -z "$cur_ver" ] && cur_ver="Installed"
+
+        latest_ver=$(npm view 9router version 2>/dev/null)
+        if [ -n "$latest_ver" ] && [ "$cur_ver" != "Installed" ]; then
+            if [ "$cur_ver" == "$latest_ver" ]; then
+                echo -e "${CLR_GRN}$cur_ver ${CLR_MUTED}(latest)${CLR_NC}"
+            else
+                echo -e "${CLR_YLW}$cur_ver ${CLR_MUTED}-> ${CLR_GRN}$latest_ver${CLR_NC}"
+            fi
+        else
+            echo -e "${CLR_BLU}$cur_ver${CLR_NC}"
+        fi
     else
-        echo "Not Installed"
+        echo -e "${CLR_RED}Not Installed${CLR_NC}"
     fi
 }
 
@@ -45,7 +60,6 @@ resolve_runtime() {
     return 0
 }
 
-# Function to build and write the systemd unit file
 generate_systemd_unit() {
     local port="$1"
     local host="$2"
@@ -83,7 +97,6 @@ Environment=NODE_ENV=production
 Environment=PATH=$(dirname "$CURRENT_NODE_BIN"):$PATH
 SERVICE_EOF
 
-    # Inject optional resource limits if provided
     [ -n "$mem_max" ] && echo "MemoryMax=$mem_max" >> "$SERVICE_FILE"
     [ -n "$mem_high" ] && echo "MemoryHigh=$mem_high" >> "$SERVICE_FILE"
     [ -n "$cpu_quota" ] && echo "CPUQuota=$cpu_quota" >> "$SERVICE_FILE"
@@ -103,19 +116,16 @@ app_configure_wizard() {
     echo ""
     echo -e "${CLR_BLU}=== Standard Configuration ===${CLR_NC}"
     
-    # 1. Port setup
     local cur_p
     cur_p=$(get_current_port)
     echo -e " Enter listening Port ${CLR_MUTED}(Default: $cur_p)${CLR_NC}:"
     read -p " > " in_port
     local cfg_port="${in_port:-$cur_p}"
 
-    # 2. Host setup
     echo -e " Enter listening Host IP ${CLR_MUTED}(Default: 127.0.0.1)${CLR_NC}:"
     read -p " > " in_host
     local cfg_host="${in_host:-127.0.0.1}"
 
-    # 3. Advanced setup prompt
     echo ""
     echo -e "${CLR_BLU}=== Advanced Limits (Optional) ===${CLR_NC}"
     echo -e " Do you want to configure memory & CPU constraints? [y/N]:"
@@ -130,33 +140,21 @@ app_configure_wizard() {
         echo ""
         echo -e "${CLR_MUTED}[Type 'n' to skip/disable any specific limit]${CLR_NC}"
 
-        # MemoryMax
         echo -e " Systemd Hard Memory Limit ${CLR_MUTED}(Default: 450M | 'n' to skip)${CLR_NC}:"
         read -p " > " in_mmax
-        if [[ ! "$in_mmax" =~ ^[nN]$ ]]; then
-            cfg_mem_max="${in_mmax:-450M}"
-        fi
+        [[ ! "$in_mmax" =~ ^[nN]$ ]] && cfg_mem_max="${in_mmax:-450M}"
 
-        # MemoryHigh
         echo -e " Systemd Throttle Memory Limit ${CLR_MUTED}(Default: 380M | 'n' to skip)${CLR_NC}:"
         read -p " > " in_mhigh
-        if [[ ! "$in_mhigh" =~ ^[nN]$ ]]; then
-            cfg_mem_high="${in_mhigh:-380M}"
-        fi
+        [[ ! "$in_mhigh" =~ ^[nN]$ ]] && cfg_mem_high="${in_mhigh:-380M}"
 
-        # Node Heap Limit
         echo -e " Node.js V8 Engine Heap Limit in MB ${CLR_MUTED}(Default: 384 | 'n' to skip)${CLR_NC}:"
         read -p " > " in_heap
-        if [[ ! "$in_heap" =~ ^[nN]$ ]]; then
-            cfg_node_heap="${in_heap:-384}"
-        fi
+        [[ ! "$in_heap" =~ ^[nN]$ ]] && cfg_node_heap="${in_heap:-384}"
 
-        # CPU Quota
         echo -e " Maximum CPU Core Quota ${CLR_MUTED}(Default: 80% | 'n' to skip)${CLR_NC}:"
         read -p " > " in_cpu
-        if [[ ! "$in_cpu" =~ ^[nN]$ ]]; then
-            cfg_cpu="${in_cpu:-80%}"
-        fi
+        [[ ! "$in_cpu" =~ ^[nN]$ ]] && cfg_cpu="${in_cpu:-80%}"
     fi
 
     echo -e "${CLR_BLU}[*] Applying configuration and updating service...${CLR_NC}"
@@ -166,7 +164,7 @@ app_configure_wizard() {
         if systemctl is-active --quiet 9router; then
             echo -e "${CLR_GRN}[+] 9router successfully running with updated settings!${CLR_NC}"
         else
-            echo -e "${CLR_RED}[!] Service failed to start. Check option 6 (Status & Logs).${CLR_NC}"
+            echo -e "${CLR_RED}[!] Service failed to start. Check option 7 (Status & Logs).${CLR_NC}"
         fi
     fi
 }
@@ -184,22 +182,9 @@ app_install() {
     systemctl enable 9router 2>/dev/null
 }
 
-app_edit_config() {
-    if ! app_is_installed; then
-        echo -e "${CLR_RED}[!] 9router is not installed yet.${CLR_NC}"
-        return
-    fi
-    if ! resolve_runtime; then
-        return
-    fi
-
-    echo -e "${CLR_YLW}[*] Initiating 9router configuration wizard...${CLR_NC}"
-    app_configure_wizard
-}
-
 app_update() {
     if ! app_is_installed; then
-        echo -e "${CLR_RED}[!] 9router is not installed yet. Please install it first.${CLR_NC}"
+        echo -e "${CLR_RED}[!] 9router is not installed yet.${CLR_NC}"
         return
     fi
     if ! resolve_runtime; then
@@ -275,22 +260,40 @@ app_delete() {
     echo -e "${CLR_GRN}[+] 9router removed completely.${CLR_NC}"
 }
 
+reinstall_this_script() {
+    echo -e "${CLR_BLU}[*] Updating 9router.sh module from GitHub...${CLR_NC}"
+    local target_dest=""
+    if [ -d "$PERM_DIR" ] && [ -f "$PERM_DIR/9router.sh" ]; then
+        target_dest="$PERM_DIR/9router.sh"
+    else
+        mkdir -p "$CACHE_DIR"
+        target_dest="$CACHE_DIR/9router.sh"
+    fi
+
+    if curl -fsSL "$REPO_RAW_URL/9router.sh" -o "$target_dest"; then
+        chmod +x "$target_dest"
+        echo -e "${CLR_GRN}[+] 9router module reinstalled successfully.${CLR_NC}"
+        source "$target_dest"
+    else
+        echo -e "${CLR_RED}[!] Failed to fetch 9router.sh from GitHub.${CLR_NC}"
+    fi
+}
+
 app_menu() {
     while true; do
         clear
         echo "======================================"
         echo "           9Router Menu               "
         echo "======================================"
-        local v_info cur_port
-        v_info=$(get_app_version)
+        local cur_port
         cur_port=$(get_current_port)
         if app_is_installed; then
             echo -e " Status  : ${CLR_GRN}Installed (Active)${CLR_NC}"
-            echo -e " Version : ${CLR_BLU}$v_info${CLR_NC}"
+            echo -e " Version : $(get_version_status)"
             echo -e " Port    : ${CLR_YLW}$cur_port${CLR_NC}"
         else
             echo -e " Status  : ${CLR_RED}Not Installed${CLR_NC}"
-            echo -e " Version : ${CLR_RED}$v_info${CLR_NC}"
+            echo -e " Version : $(get_version_status)"
         fi
         echo "--------------------------------------"
         echo " 1) Install"
@@ -302,6 +305,7 @@ app_menu() {
         echo " 7) Status & Logs"
         echo " 8) Delete"
         echo ""
+        echo -e " ${CLR_CYN}i) Update & Reinstall Script${CLR_NC}"
         echo -e " ${CLR_ORG}b) Back${CLR_NC}"
         echo -e " ${CLR_RED}e) Exit${CLR_NC}"
         echo "--------------------------------------"
@@ -309,12 +313,13 @@ app_menu() {
         case $choice in
             1) app_install; read -p "Press Enter to continue..." ;;
             2) app_update; read -p "Press Enter to continue..." ;;
-            3) app_edit_config; read -p "Press Enter to continue..." ;;
+            3) app_configure_wizard; read -p "Press Enter to continue..." ;;
             4) app_start; read -p "Press Enter to continue..." ;;
             5) app_stop; read -p "Press Enter to continue..." ;;
             6) app_restart; read -p "Press Enter to continue..." ;;
             7) app_status; read -p "Press Enter to continue..." ;;
             8) app_delete; read -p "Press Enter to continue..." ;;
+            i|I) reinstall_this_script; read -p "Press Enter to continue..." ;;
             b|B) break ;;
             e|E) clear; exit 0 ;;
             *) ;;
