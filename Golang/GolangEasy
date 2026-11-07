@@ -12,14 +12,20 @@ CLR_NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_RAW_URL="https://raw.githubusercontent.com/h4m1dr/app-folder/main/Golang"
 CACHE_DIR="/tmp/app-folder-golang-cache"
-PERM_DIR="/opt/app-folder/Golang"
-
-KNOWN_APPS=("authelia.sh" "cliproxyapi.sh")
 
 if [ "$EUID" -ne 0 ]; then
     echo -e "${CLR_RED}[!] Please run as root (sudo).${CLR_NC}"
     exit 1
 fi
+
+# Ensure minimal system network certificates
+ensure_runtime_dependencies() {
+    if ! command -v curl &>/dev/null || ! [ -d "/etc/ssl/certs" ]; then
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y curl ca-certificates tar >/dev/null 2>&1
+    fi
+}
+ensure_runtime_dependencies
 
 get_go_bin() {
     if command -v go &>/dev/null; then
@@ -37,7 +43,7 @@ get_go_version_status() {
         v=$("$b" version 2>/dev/null | awk '{print $3}')
         echo -e "${CLR_GRN}${v:-Installed}${CLR_NC}"
     else
-        echo -e "${CLR_RED}Not Installed${CLR_NC}"
+        echo -e "${CLR_MUTED}Not Installed (Not needed for compiled apps)${CLR_NC}"
     fi
 }
 
@@ -45,20 +51,25 @@ go_menu() {
     while true; do
         clear
         echo "======================================"
-        echo "          Go Runtime Engine           "
+        echo "       Go Compiler Engine Setup       "
         echo "======================================"
+        echo -e " ${CLR_YLW}Note:${CLR_NC} Go runtime is ${CLR_GRN}NOT required${CLR_NC} for apps"
+        echo -e " like Authelia or CLIProxyAPI (Native Binaries)."
+        echo -e " Only install if you intend to compile Go code."
+        echo "--------------------------------------"
         local b
         b=$(get_go_bin)
         if [ -n "$b" ]; then
-            echo -e " Go Version  : $(get_go_version_status)"
+            echo -e " Status      : ${CLR_GRN}Installed${CLR_NC}"
+            echo -e " Version     : $(get_go_version_status)"
             echo -e " Binary Path : ${CLR_BLU}$b${CLR_NC}"
         else
-            echo -e " Status      : ${CLR_RED}Not Installed${CLR_NC}"
+            echo -e " Status      : ${CLR_MUTED}Not Installed${CLR_NC}"
         fi
         echo "--------------------------------------"
-        echo " 1) Install Go (Official Latest)"
-        echo " 2) Update Go"
-        echo " 3) Delete Go"
+        echo " 1) Install Minimal Go (Official Archive)"
+        echo " 2) Update Go to Latest"
+        echo " 3) Remove Go Compiler"
         echo ""
         echo -e " ${CLR_ORG}b) Back${CLR_NC}"
         echo -e " ${CLR_RED}e) Exit${CLR_NC}"
@@ -66,24 +77,26 @@ go_menu() {
         read -p " Select option: " c
         case $c in
             1|2)
-                echo -e "${CLR_BLU}[*] Fetching stable Go archive...${CLR_NC}"
+                echo -e "${CLR_BLU}[*] Checking latest release from go.dev...${CLR_NC}"
                 local ver
                 ver=$(curl -fsSL "https://go.dev/VERSION?m=text" 2>/dev/null | head -n 1)
                 [ -z "$ver" ] && ver="go1.22.4"
-                
+
+                echo -e "${CLR_BLU}[*] Downloading minimal $ver archive...${CLR_NC}"
                 curl -fsSL "https://go.dev/dl/${ver}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+                
                 rm -rf /usr/local/go
                 tar -C /usr/local -xzf /tmp/go.tar.gz
                 rm -f /tmp/go.tar.gz
-                
+
                 grep -q '/usr/local/go/bin' /etc/profile || echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
                 export PATH=$PATH:/usr/local/go/bin
-                echo -e "${CLR_GRN}[+] Go ($ver) ready.${CLR_NC}"
+                echo -e "${CLR_GRN}[+] Go ($ver) ready at /usr/local/go/bin/go.${CLR_NC}"
                 read -p "Press Enter to continue..." ;;
             3)
                 rm -rf /usr/local/go
                 sed -i '/\/usr\/local\/go\/bin/d' /etc/profile
-                echo -e "${CLR_GRN}[+] Go runtime deleted.${CLR_NC}"
+                echo -e "${CLR_GRN}[+] Go compiler removed completely.${CLR_NC}"
                 read -p "Press Enter to continue..." ;;
             b|B) break ;;
             e|E) clear; exit 0 ;;
@@ -97,8 +110,8 @@ wipe_menu() {
         echo "======================================"
         echo "           System Wipe Menu           "
         echo "======================================"
-        echo " 1) Clean Build Caches"
-        echo " 2) Purge Modules & System Remnants"
+        echo " 1) Clean Go Build Caches"
+        echo " 2) Purge Module & Temp Remnants"
         echo " 3) Wipe Remote Script Cache (/tmp)"
         echo " 4) Wipe Permanent Installation Folder"
         echo ""
@@ -140,13 +153,12 @@ wipe_menu() {
     done
 }
 
-# Ensure scripts exist if running standalone via curl
 sync_modules() {
     local target_dir="$SCRIPT_DIR"
     if [ ! -f "$target_dir/authelia.sh" ] && [ ! -f "$target_dir/cliproxyapi.sh" ]; then
         target_dir="$CACHE_DIR"
         mkdir -p "$CACHE_DIR"
-        for app in "${KNOWN_APPS[@]}"; do
+        for app in "authelia.sh" "cliproxyapi.sh"; do
             [ ! -f "$CACHE_DIR/$app" ] && curl -fsSL "$REPO_RAW_URL/$app" -o "$CACHE_DIR/$app" 2>/dev/null
         done
     fi
@@ -160,21 +172,21 @@ while true; do
     echo "======================================"
     echo "          GolangEasy Manager          "
     echo "======================================"
-    echo -e " Go Runtime    : $(get_go_version_status)"
+    echo -e " Compiler      : $(get_go_version_status)"
     echo "--------------------------------------"
-    echo " 1) Golang Engine"
+    echo -e " 1) Golang Engine ${CLR_MUTED}(Optional/Dev Only)${CLR_NC}"
 
     installed_apps=()
     uninstalled_apps=()
 
-    # Check Authelia installation
+    # 1. Authelia Check
     if [ -f "/etc/systemd/system/authelia.service" ] && [ -f "/usr/local/bin/authelia" ]; then
         installed_apps+=("authelia:$ACTIVE_MODULE_DIR/authelia.sh")
     else
         uninstalled_apps+=("authelia:$ACTIVE_MODULE_DIR/authelia.sh")
     fi
 
-    # Check CLIProxyAPI installation
+    # 2. CLIProxyAPI Check
     if [ -f "/etc/systemd/system/cliproxyapi.service" ] && [ -f "/usr/local/bin/cliproxyapi" ]; then
         installed_apps+=("cliproxyapi:$ACTIVE_MODULE_DIR/cliproxyapi.sh")
     else
@@ -203,8 +215,7 @@ while true; do
         go_menu
     elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 2 ] && [ "$choice" -lt "$others_idx" ]; then
         target_item="${installed_apps[$((choice - 2))]}"
-        target_script="${target_item##*:}"
-        bash "$target_script"
+        bash "${target_item##*:}"
     elif [ "$choice" == "$others_idx" ]; then
         while true; do
             clear
