@@ -36,7 +36,7 @@ app-folder/
 Run directly in memory without cloning the full repository:
 
 ```bash
-bash <(curl -fsSL [https://raw.githubusercontent.com/h4m1dr/app-folder/main/node-js/NodejsEasy](https://raw.githubusercontent.com/h4m1dr/app-folder/main/node-js/NodejsEasy))
+curl -fsSL https://raw.githubusercontent.com/h4m1dr/app-folder/main/node-js/NodejsEasy | bash
 
 ```
 
@@ -46,7 +46,8 @@ bash <(curl -fsSL [https://raw.githubusercontent.com/h4m1dr/app-folder/main/node
 
 1. Clone the repository into `/opt/app-folder`:
 ```bash
-git clone [https://github.com/h4m1dr/app-folder.git](https://github.com/h4m1dr/app-folder.git) /opt/app-folder
+mkdir -p /opt/app-folder
+git clone https://github.com/h4m1dr/app-folder.git /opt/app-folder
 
 ```
 
