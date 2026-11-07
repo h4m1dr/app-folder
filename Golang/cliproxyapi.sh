@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# CLIProxyAPI Master Control Panel (Golang Architecture)
+# CLIProxyAPI Master Control Panel (Golang Architecture - v8 Layout)
 # ==============================================================================
 
 INSTALL_DIR="/opt/cliproxyapi"
@@ -42,7 +42,7 @@ download_and_extract_assets() {
     fi
 
     if ! curl -fL "$download_url" -o "$tmp_tar"; then
-        echo -e "${CLR_RED}[!] Download failed. Check server network.${CLR_NC}"
+        echo -e "${CLR_RED}[!] Download failed. Check network or proxy.${CLR_NC}"
         rm -rf "$tmp_dir" "$tmp_tar"
         return 1
     fi
@@ -56,7 +56,7 @@ download_and_extract_assets() {
         systemctl stop cliproxyapi 2>/dev/null
         mv "$bin_source" "$BIN_PATH"
         chmod +x "$BIN_PATH"
-        echo -e "${CLR_GRN}[+] Core binary updated at $BIN_PATH${CLR_NC}"
+        echo -e "${CLR_GRN}[+] Core binary placed at $BIN_PATH${CLR_NC}"
     else
         echo -e "${CLR_RED}[!] Valid executable not found in package.${CLR_NC}"
         rm -rf "$tmp_dir" "$tmp_tar"
@@ -168,7 +168,7 @@ EOF
         systemctl reload nginx
         echo -e "${CLR_GRN}[+] Nginx configuration active.${CLR_NC}"
     else
-        echo -e "${CLR_RED}[!] Nginx syntax error. Check configuration manual.${CLR_NC}"
+        echo -e "${CLR_RED}[!] Nginx syntax error. Please inspect config manually.${CLR_NC}"
     fi
 }
 
@@ -204,13 +204,25 @@ reconfigure_wizard() {
         esac
     fi
 
-    # نوشتن هر دو کلید management_key و auth_key برای پشتیبانی کامل
+    # ایجاد کانفیگ نسخه ۸ با فعال بودن Management API
     cat <<EOF > "$CONFIG_FILE"
-host: "$host"
-port: $port
-management_key: "$key"
-auth_key: "$key"
-log_level: "$log_level"
+config-version: 8
+
+server:
+  host: "$host"
+  port: $port
+
+management:
+  allow-remote: true
+  secret-key: "$key"
+  disable-control-panel: false
+
+access:
+  api-keys:
+    - "$key"
+
+logging:
+  level: "$log_level"
 EOF
 
     local mem_limit=""
@@ -243,7 +255,7 @@ EOF
     fi
 
     systemctl restart cliproxyapi
-    echo -e "${CLR_GRN}[+] Settings successfully applied!${CLR_NC}"
+    echo -e "${CLR_GRN}[+] CLIProxyAPI successfully deployed and active!${CLR_NC}"
 }
 
 install_fresh() {
@@ -253,10 +265,10 @@ install_fresh() {
 }
 
 update_only() {
-    echo -e "${CLR_BLU}[*] Updating CLIProxyAPI binary without touching configurations...${CLR_NC}"
+    echo -e "${CLR_BLU}[*] Updating CLIProxyAPI binary without touching configs...${CLR_NC}"
     if download_and_extract_assets; then
         systemctl restart cliproxyapi
-        echo -e "${CLR_GRN}[+] CLIProxyAPI updated and service restarted successfully.${CLR_NC}"
+        echo -e "${CLR_GRN}[+] Updated and service restarted successfully.${CLR_NC}"
     fi
 }
 
@@ -304,7 +316,7 @@ while true; do
 
     echo -e " Core Version   : ${CLR_GRN}$(get_version)${CLR_NC}"
     if [ -f "$CONFIG_FILE" ]; then
-        curr_port=$(grep "port:" "$CONFIG_FILE" | head -n1 | awk '{print $2}')
+        curr_port=$(grep -A 2 "server:" "$CONFIG_FILE" | grep "port:" | awk '{print $2}')
         echo -e " Active Port    : ${CLR_YLW}${curr_port:-Unknown}${CLR_NC}"
     fi
     echo -e "${CLR_CYN}------------------------------------------------------${CLR_NC}"
