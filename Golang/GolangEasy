@@ -21,125 +21,24 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-ensure_system_deps() {
-    command -v curl &>/dev/null && command -v tar &>/dev/null && return 0
-    apt-get update -y > /dev/null 2>&1
-    apt-get install -y curl tar ca-certificates > /dev/null 2>&1
-}
-ensure_system_deps
-
-is_go_installed() {
-    command -v go &> /dev/null && return 0
-    [ -x "/usr/local/go/bin/go" ] && return 0
-    return 1
-}
-
 get_go_bin() {
-    if command -v go &> /dev/null; then
-        which go
+    if command -v go &>/dev/null; then
+        command -v go
     elif [ -x "/usr/local/go/bin/go" ]; then
         echo "/usr/local/go/bin/go"
     fi
 }
 
-TARGET_GO_VER=""
-CACHED_GO_LOCAL=""
-
-go_engine_init_metadata() {
-    if is_go_installed && [ -z "$TARGET_GO_VER" ]; then
-        local go_bin
-        go_bin=$(get_go_bin)
-        CACHED_GO_LOCAL=$("$go_bin" version 2>/dev/null | awk '{print $3}')
-        TARGET_GO_VER=$(curl -fsSL "https://go.dev/VERSION?m=text" 2>/dev/null | head -n 1)
-        [ -z "$TARGET_GO_VER" ] && TARGET_GO_VER="$CACHED_GO_LOCAL"
-    fi
-}
-
 get_go_version_status() {
-    local go_bin
-    go_bin=$(get_go_bin)
-
-    if [ -n "$go_bin" ]; then
-        local cur_v="${CACHED_GO_LOCAL:-$("$go_bin" version 2>/dev/null | awk '{print $3}')}"
-        if [ -n "$TARGET_GO_VER" ] && [ "$cur_v" != "$TARGET_GO_VER" ]; then
-            echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}-> ${CLR_GRN}$TARGET_GO_VER${CLR_NC}"
-        else
-            echo -e "${CLR_GRN}$cur_v ${CLR_MUTED}(latest)${CLR_NC}"
-        fi
+    local b
+    b=$(get_go_bin)
+    if [ -n "$b" ]; then
+        local v
+        v=$("$b" version 2>/dev/null | awk '{print $3}')
+        echo -e "${CLR_GRN}${v:-Installed}${CLR_NC}"
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
     fi
-}
-
-go_install() {
-    if is_go_installed; then
-        echo -e "${CLR_GRN}[+] Go is already installed at: $(get_go_bin)${CLR_NC}"
-        return
-    fi
-
-    echo -e "${CLR_BLU}[*] Fetching latest stable Go version...${CLR_NC}"
-    local ver
-    ver=$(curl -fsSL "https://go.dev/VERSION?m=text" 2>/dev/null | head -n 1)
-    [ -z "$ver" ] && ver="go1.22.4"
-
-    local archive="${ver}.linux-amd64.tar.gz"
-    echo -e "${CLR_BLU}[*] Downloading $archive...${CLR_NC}"
-    if ! curl -fsSL "https://go.dev/dl/$archive" -o "/tmp/$archive"; then
-        echo -e "${CLR_RED}[!] Download failed.${CLR_NC}"
-        return 1
-    fi
-
-    echo -e "${CLR_BLU}[*] Extracting to /usr/local/go...${CLR_NC}"
-    rm -rf /usr/local/go
-    tar -C /usr/local -xzf "/tmp/$archive"
-    rm -f "/tmp/$archive"
-
-    if ! grep -q '/usr/local/go/bin' /etc/profile; then
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
-    fi
-    export PATH=$PATH:/usr/local/go/bin
-
-    TARGET_GO_VER=""
-    CACHED_GO_LOCAL=""
-    go_engine_init_metadata
-    echo -e "${CLR_GRN}[+] Go ($ver) installed successfully.${CLR_NC}"
-}
-
-go_update() {
-    echo -e "${CLR_BLU}[*] Updating Go runtime to latest release...${CLR_NC}"
-    local ver
-    ver=$(curl -fsSL "https://go.dev/VERSION?m=text" 2>/dev/null | head -n 1)
-    if [ -z "$ver" ]; then
-        echo -e "${CLR_RED}[!] Could not check latest Go version.${CLR_NC}"
-        return 1
-    fi
-
-    local archive="${ver}.linux-amd64.tar.gz"
-    echo -e "${CLR_BLU}[*] Downloading $archive...${CLR_NC}"
-    if ! curl -fsSL "https://go.dev/dl/$archive" -o "/tmp/$archive"; then
-        echo -e "${CLR_RED}[!] Download failed.${CLR_NC}"
-        return 1
-    fi
-
-    rm -rf /usr/local/go
-    tar -C /usr/local -xzf "/tmp/$archive"
-    rm -f "/tmp/$archive"
-    export PATH=$PATH:/usr/local/go/bin
-
-    TARGET_GO_VER=""
-    CACHED_GO_LOCAL=""
-    go_engine_init_metadata
-    echo -e "${CLR_GRN}[+] Active Go: $(get_go_bin) ($ver)${CLR_NC}"
-}
-
-go_delete() {
-    echo -e "${CLR_YLW}[!] Purging Go runtime and environments...${CLR_NC}"
-    rm -rf /usr/local/go
-    sed -i '/\/usr\/local\/go\/bin/d' /etc/profile
-    rm -rf /root/go
-    TARGET_GO_VER=""
-    CACHED_GO_LOCAL=""
-    echo -e "${CLR_GRN}[+] Go runtime removed.${CLR_NC}"
 }
 
 go_menu() {
@@ -148,76 +47,48 @@ go_menu() {
         echo "======================================"
         echo "          Go Runtime Engine           "
         echo "======================================"
-        local go_bin
-        go_bin=$(get_go_bin)
-        if [ -n "$go_bin" ]; then
+        local b
+        b=$(get_go_bin)
+        if [ -n "$b" ]; then
             echo -e " Go Version  : $(get_go_version_status)"
-            echo -e " Binary Path : ${CLR_BLU}$go_bin${CLR_NC}"
-            echo -e " GOPATH      : ${CLR_BLU}${GOPATH:-/root/go}${CLR_NC}"
+            echo -e " Binary Path : ${CLR_BLU}$b${CLR_NC}"
         else
             echo -e " Status      : ${CLR_RED}Not Installed${CLR_NC}"
         fi
         echo "--------------------------------------"
-        echo " 1) Install Go"
+        echo " 1) Install Go (Official Latest)"
         echo " 2) Update Go"
         echo " 3) Delete Go"
         echo ""
         echo -e " ${CLR_ORG}b) Back${CLR_NC}"
         echo -e " ${CLR_RED}e) Exit${CLR_NC}"
         echo "--------------------------------------"
-        read -p " Select option: " choice
-        case $choice in
-            1) go_install; read -p "Press Enter to continue..." ;;
-            2) go_update; read -p "Press Enter to continue..." ;;
-            3) go_delete; read -p "Press Enter to continue..." ;;
+        read -p " Select option: " c
+        case $c in
+            1|2)
+                echo -e "${CLR_BLU}[*] Fetching stable Go archive...${CLR_NC}"
+                local ver
+                ver=$(curl -fsSL "https://go.dev/VERSION?m=text" 2>/dev/null | head -n 1)
+                [ -z "$ver" ] && ver="go1.22.4"
+                
+                curl -fsSL "https://go.dev/dl/${ver}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+                rm -rf /usr/local/go
+                tar -C /usr/local -xzf /tmp/go.tar.gz
+                rm -f /tmp/go.tar.gz
+                
+                grep -q '/usr/local/go/bin' /etc/profile || echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
+                export PATH=$PATH:/usr/local/go/bin
+                echo -e "${CLR_GRN}[+] Go ($ver) ready.${CLR_NC}"
+                read -p "Press Enter to continue..." ;;
+            3)
+                rm -rf /usr/local/go
+                sed -i '/\/usr\/local\/go\/bin/d' /etc/profile
+                echo -e "${CLR_GRN}[+] Go runtime deleted.${CLR_NC}"
+                read -p "Press Enter to continue..." ;;
             b|B) break ;;
             e|E) clear; exit 0 ;;
-            *) ;;
         esac
     done
-}
-
-wipe_simple() {
-    echo -e "${CLR_BLU}[*] Running Simple Cache Wipe...${CLR_NC}"
-    if is_go_installed; then
-        local go_bin
-        go_bin=$(get_go_bin)
-        "$go_bin" clean -cache 2>/dev/null
-    fi
-    rm -rf /tmp/go-build* 2>/dev/null
-    echo -e "${CLR_GRN}[+] Standard build and module download caches wiped.${CLR_NC}"
-}
-
-wipe_deep() {
-    echo -e "${CLR_BLU}[*] Running Deep System & Residual Wipe...${CLR_NC}"
-    if is_go_installed; then
-        local go_bin
-        go_bin=$(get_go_bin)
-        "$go_bin" clean -cache -modcache -testcache 2>/dev/null
-    fi
-    rm -rf /root/go/pkg /tmp/go-build* /tmp/authelia* /tmp/cliproxyapi* 2>/dev/null
-    apt-get clean -y >/dev/null 2>&1
-    apt-get autoremove --purge -y >/dev/null 2>&1
-    journalctl --vacuum-time=1d >/dev/null 2>&1
-    echo -e "${CLR_GRN}[+] Deep post-build residual files, Go mod caches, and logs wiped.${CLR_NC}"
-}
-
-wipe_cache_folder() {
-    echo -e "${CLR_BLU}[*] Removing all runner script caches...${CLR_NC}"
-    rm -rf /tmp/app-folder-golang-cache /tmp/app-folder-cache
-    echo -e "${CLR_GRN}[+] Script runner cache directories removed.${CLR_NC}"
-}
-
-wipe_permanent_folder() {
-    echo -e "${CLR_RED}[!] Warning: This will delete permanent repository directory (/opt/app-folder/Golang).${CLR_NC}"
-    read -p " Are you sure you want to delete permanent folder? [y/N]: " confirm
-    if [[ "$confirm" =~ ^[yY]([eE][sS])?$ ]]; then
-        rm -rf /opt/app-folder/Golang
-        rm -f /usr/local/bin/golang-easy
-        echo -e "${CLR_GRN}[+] Permanent application files and system symlink wiped.${CLR_NC}"
-    else
-        echo -e "${CLR_YLW}[*] Operation aborted.${CLR_NC}"
-    fi
 }
 
 wipe_menu() {
@@ -226,195 +97,148 @@ wipe_menu() {
         echo "======================================"
         echo "           System Wipe Menu           "
         echo "======================================"
-        echo -e " 1) Simple Cache Wipe"
-        echo -e "    ${CLR_MUTED}(Cleans Go build and compilation caches)${CLR_NC}"
-        echo ""
-        echo -e " 2) Deep Residual Wipe"
-        echo -e "    ${CLR_MUTED}(Purges Go mod caches, system package caches, and journal logs)${CLR_NC}"
-        echo ""
-        echo -e " 3) Wipe Remote Script Cache"
-        echo -e "    ${CLR_MUTED}(Deletes temporary runner folders in /tmp)${CLR_NC}"
-        echo ""
-        echo -e " 4) Wipe Permanent Application Folder"
-        echo -e "    ${CLR_MUTED}(Deletes /opt/app-folder/Golang and global binary links)${CLR_NC}"
+        echo " 1) Clean Build Caches"
+        echo " 2) Purge Modules & System Remnants"
+        echo " 3) Wipe Remote Script Cache (/tmp)"
+        echo " 4) Wipe Permanent Installation Folder"
         echo ""
         echo -e " ${CLR_ORG}b) Back${CLR_NC}"
         echo -e " ${CLR_RED}e) Exit${CLR_NC}"
         echo "--------------------------------------"
-        read -p " Select option: " choice
-        case $choice in
-            1) wipe_simple; read -p "Press Enter to continue..." ;;
-            2) wipe_deep; read -p "Press Enter to continue..." ;;
-            3) wipe_cache_folder; read -p "Press Enter to continue..." ;;
-            4) wipe_permanent_folder; read -p "Press Enter to continue..." ;;
+        read -p " Select option: " c
+        case $c in
+            1)
+                local b
+                b=$(get_go_bin)
+                [ -n "$b" ] && "$b" clean -cache 2>/dev/null
+                rm -rf /tmp/go-build* 2>/dev/null
+                echo -e "${CLR_GRN}[+] Build cache wiped.${CLR_NC}"
+                read -p "Press Enter to continue..." ;;
+            2)
+                local b
+                b=$(get_go_bin)
+                [ -n "$b" ] && "$b" clean -cache -modcache 2>/dev/null
+                rm -rf /root/go/pkg /tmp/authelia* /tmp/cliproxyapi* /tmp/go* 2>/dev/null
+                apt-get clean -y >/dev/null 2>&1
+                journalctl --vacuum-time=1d >/dev/null 2>&1
+                echo -e "${CLR_GRN}[+] Deep remnants purged.${CLR_NC}"
+                read -p "Press Enter to continue..." ;;
+            3)
+                rm -rf /tmp/app-folder*
+                echo -e "${CLR_GRN}[+] Script runner caches removed.${CLR_NC}"
+                read -p "Press Enter to continue..." ;;
+            4)
+                read -p " Remove /opt/app-folder/Golang completely? [y/N]: " confirm
+                if [[ "$confirm" =~ ^[yY]$ ]]; then
+                    rm -rf /opt/app-folder/Golang /usr/local/bin/golang-easy
+                    echo -e "${CLR_GRN}[+] Directory and symlink wiped.${CLR_NC}"
+                    exit 0
+                fi ;;
             b|B) break ;;
             e|E) clear; exit 0 ;;
-            *) ;;
         esac
     done
 }
 
-self_update() {
-    echo -e "${CLR_BLU}[*] Reinstalling and updating scripts from GitHub...${CLR_NC}"
-    rm -rf "$CACHE_DIR" /tmp/app-folder-golang-cache
+# Ensure scripts exist if running standalone via curl
+sync_modules() {
+    local target_dir="$SCRIPT_DIR"
+    if [ ! -f "$target_dir/authelia.sh" ] && [ ! -f "$target_dir/cliproxyapi.sh" ]; then
+        target_dir="$CACHE_DIR"
+        mkdir -p "$CACHE_DIR"
+        for app in "${KNOWN_APPS[@]}"; do
+            [ ! -f "$CACHE_DIR/$app" ] && curl -fsSL "$REPO_RAW_URL/$app" -o "$CACHE_DIR/$app" 2>/dev/null
+        done
+    fi
+    echo "$target_dir"
+}
 
-    if [ -d "$PERM_DIR" ] && [ -f "$PERM_DIR/GolangEasy" ]; then
-        curl -fsSL "$REPO_RAW_URL/GolangEasy" -o "$PERM_DIR/GolangEasy"
-        curl -fsSL "$REPO_RAW_URL/authelia.sh" -o "$PERM_DIR/authelia.sh"
-        curl -fsSL "$REPO_RAW_URL/cliproxyapi.sh" -o "$PERM_DIR/cliproxyapi.sh"
-        chmod +x "$PERM_DIR/GolangEasy" "$PERM_DIR"/*.sh
-        echo -e "${CLR_GRN}[+] Permanent installation files updated.${CLR_NC}"
-        exec "$PERM_DIR/GolangEasy"
+ACTIVE_MODULE_DIR=$(sync_modules)
+
+while true; do
+    clear
+    echo "======================================"
+    echo "          GolangEasy Manager          "
+    echo "======================================"
+    echo -e " Go Runtime    : $(get_go_version_status)"
+    echo "--------------------------------------"
+    echo " 1) Golang Engine"
+
+    installed_apps=()
+    uninstalled_apps=()
+
+    # Check Authelia installation
+    if [ -f "/etc/systemd/system/authelia.service" ] && [ -f "/usr/local/bin/authelia" ]; then
+        installed_apps+=("authelia:$ACTIVE_MODULE_DIR/authelia.sh")
     else
-        mkdir -p "$CACHE_DIR"
-        curl -fsSL "$REPO_RAW_URL/GolangEasy" -o "$CACHE_DIR/GolangEasy"
-        curl -fsSL "$REPO_RAW_URL/authelia.sh" -o "$CACHE_DIR/authelia.sh"
-        curl -fsSL "$REPO_RAW_URL/cliproxyapi.sh" -o "$CACHE_DIR/cliproxyapi.sh"
-        chmod +x "$CACHE_DIR/GolangEasy" "$CACHE_DIR"/*.sh
-        echo -e "${CLR_GRN}[+] Runner scripts updated.${CLR_NC}"
-        exec bash "$CACHE_DIR/GolangEasy"
-    fi
-}
-
-others_menu() {
-    local uninstalled_files=("$@")
-    while true; do
-        clear
-        echo "======================================"
-        echo "          Available Apps (Others)     "
-        echo "======================================"
-        if [ ${#uninstalled_files[@]} -eq 0 ]; then
-            echo " (No uninstalled apps found)"
-            echo "--------------------------------------"
-            echo -e " ${CLR_ORG}b) Back${CLR_NC}"
-            echo -e " ${CLR_RED}e) Exit${CLR_NC}"
-            read -p " Select option: " choice
-            [[ "$choice" =~ ^[bB]$ ]] && break
-            [[ "$choice" =~ ^[eE]$ ]] && { clear; exit 0; }
-            continue
-        fi
-
-        local idx=1
-        for f in "${uninstalled_files[@]}"; do
-            local base_name
-            base_name=$(basename "$f" .sh)
-            echo " $idx) $base_name"
-            ((idx++))
-        done
-        echo ""
-        echo -e " ${CLR_ORG}b) Back${CLR_NC}"
-        echo -e " ${CLR_RED}e) Exit${CLR_NC}"
-        echo "--------------------------------------"
-        read -p " Select option: " choice
-
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#uninstalled_files[@]} ]; then
-            local selected_file="${uninstalled_files[$((choice - 1))]}"
-            if [ -f "$selected_file" ]; then
-                source "$selected_file"
-                if declare -f app_menu > /dev/null; then
-                    app_menu
-                    break
-                fi
-            fi
-        elif [[ "$choice" =~ ^[bB]$ ]]; then
-            break
-        elif [[ "$choice" =~ ^[eE]$ ]]; then
-            clear
-            exit 0
-        fi
-    done
-}
-
-main_menu() {
-    echo -e "${CLR_MUTED}[*] Gathering environment variables and system target releases...${CLR_NC}"
-    go_engine_init_metadata
-
-    local target_scripts=()
-    for f in "$SCRIPT_DIR"/*.sh; do
-        [ -f "$f" ] && target_scripts+=("$f")
-    done
-
-    if [ ${#target_scripts[@]} -eq 0 ]; then
-        mkdir -p "$CACHE_DIR"
-        for app_script in "${KNOWN_APPS[@]}"; do
-            [ ! -f "$CACHE_DIR/$app_script" ] && curl -fsSL "$REPO_RAW_URL/$app_script" -o "$CACHE_DIR/$app_script" 2>/dev/null
-            [ -f "$CACHE_DIR/$app_script" ] && target_scripts+=("$CACHE_DIR/$app_script")
-        done
+        uninstalled_apps+=("authelia:$ACTIVE_MODULE_DIR/authelia.sh")
     fi
 
-    for f in "${target_scripts[@]}"; do
-        if [ -f "$f" ]; then
-            source "$f"
-            declare -f app_init_metadata > /dev/null && app_init_metadata
-        fi
-    done
+    # Check CLIProxyAPI installation
+    if [ -f "/etc/systemd/system/cliproxyapi.service" ] && [ -f "/usr/local/bin/cliproxyapi" ]; then
+        installed_apps+=("cliproxyapi:$ACTIVE_MODULE_DIR/cliproxyapi.sh")
+    else
+        uninstalled_apps+=("cliproxyapi:$ACTIVE_MODULE_DIR/cliproxyapi.sh")
+    fi
 
-    while true; do
-        clear
-        echo "======================================"
-        echo "          GolangEasy Manager          "
-        echo "======================================"
-        echo -e " Go Runtime    : $(get_go_version_status)"
-        echo "--------------------------------------"
-        echo " 1) Golang Engine"
-
-        local installed_files=()
-        local uninstalled_files=()
-
-        for f in "${target_scripts[@]}"; do
-            if [ -f "$f" ]; then
-                source "$f"
-                if declare -f app_is_installed > /dev/null && app_is_installed; then
-                    installed_files+=("$f")
-                else
-                    uninstalled_files+=("$f")
-                fi
-            fi
-        done
-
-        local idx=2
-        for f in "${installed_files[@]}"; do
-            local base_name
-            base_name=$(basename "$f" .sh)
-            echo " $idx) $base_name"
-            ((idx++))
-        done
-
-        local others_idx=$idx
-        echo " $others_idx) others"
+    idx=2
+    for item in "${installed_apps[@]}"; do
+        app_name="${item%%:*}"
+        echo " $idx) $app_name"
         ((idx++))
-
-        local wipe_idx=$idx
-        echo " $wipe_idx) wipe"
-        echo ""
-        echo -e " ${CLR_CYN}i) Self-Update & Reinstall${CLR_NC}"
-        echo -e " ${CLR_RED}e) Exit${CLR_NC}"
-        echo "======================================"
-        read -p " Select option: " choice
-
-        if [[ "$choice" =~ ^[0-9]+$ ]]; then
-            if [ "$choice" -eq 1 ]; then
-                go_menu
-            elif [ "$choice" -ge 2 ] && [ "$choice" -lt "$others_idx" ]; then
-                local selected_file="${installed_files[$((choice - 2))]}"
-                if [ -f "$selected_file" ]; then
-                    source "$selected_file"
-                    if declare -f app_menu > /dev/null; then
-                        app_menu
-                    fi
-                fi
-            elif [ "$choice" -eq "$others_idx" ]; then
-                others_menu "${uninstalled_files[@]}"
-            elif [ "$choice" -eq "$wipe_idx" ]; then
-                wipe_menu
-            fi
-        elif [[ "$choice" =~ ^[iI]$ ]]; then
-            self_update
-        elif [[ "$choice" =~ ^[eE]$ ]]; then
-            clear
-            exit 0
-        fi
     done
-}
 
-main_menu
+    others_idx=$idx
+    echo " $others_idx) others"
+    ((idx++))
+
+    wipe_idx=$idx
+    echo " $wipe_idx) wipe"
+    echo ""
+    echo -e " ${CLR_RED}e) Exit${CLR_NC}"
+    echo "======================================"
+    read -p " Select option: " choice
+
+    if [ "$choice" == "1" ]; then
+        go_menu
+    elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 2 ] && [ "$choice" -lt "$others_idx" ]; then
+        target_item="${installed_apps[$((choice - 2))]}"
+        target_script="${target_item##*:}"
+        bash "$target_script"
+    elif [ "$choice" == "$others_idx" ]; then
+        while true; do
+            clear
+            echo "======================================"
+            echo "          Available Apps (Others)     "
+            echo "======================================"
+            if [ ${#uninstalled_apps[@]} -eq 0 ]; then
+                echo " (All apps installed)"
+                echo "--------------------------------------"
+                echo -e " ${CLR_ORG}b) Back${CLR_NC}"
+                read -p " Select option: " oc
+                break
+            fi
+            oidx=1
+            for u in "${uninstalled_apps[@]}"; do
+                echo " $oidx) ${u%%:*}"
+                ((oidx++))
+            done
+            echo ""
+            echo -e " ${CLR_ORG}b) Back${CLR_NC}"
+            echo "--------------------------------------"
+            read -p " Select option: " oc
+            if [[ "$oc" =~ ^[0-9]+$ ]] && [ "$oc" -ge 1 ] && [ "$oc" -le ${#uninstalled_apps[@]} ]; then
+                target_item="${uninstalled_apps[$((oc - 1))]}"
+                bash "${target_item##*:}"
+                break
+            elif [[ "$oc" =~ ^[bB]$ ]]; then
+                break
+            fi
+        done
+    elif [ "$choice" == "$wipe_idx" ]; then
+        wipe_menu
+    elif [[ "$choice" =~ ^[eE]$ ]]; then
+        clear
+        exit 0
+    fi
+done
