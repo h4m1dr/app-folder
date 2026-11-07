@@ -10,7 +10,6 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_RAW_URL="https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js"
 
-# Catalog of known modules in repo (for remote curl runs)
 KNOWN_APPS=("9router.sh")
 
 if [ "$EUID" -ne 0 ]; then
@@ -43,18 +42,15 @@ node_install() {
 node_update() {
     echo -e "${BLUE}[*] Checking and updating Node.js & NPM...${NC}"
     
-    # 1. Update NVM runtime if NVM is detected
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
         echo -e "${BLUE}[*] Detected NVM environment. Syncing LTS...${NC}"
         source "$HOME/.nvm/nvm.sh"
         nvm install --lts --reinstall-packages-from=current 2>/dev/null || true
-    # 2. Update APT packages if installed via system package manager
     elif dpkg -l | grep -q "^ii.*nodejs"; then
         echo -e "${BLUE}[*] Updating via APT repository...${NC}"
         apt-get update -y && apt-get --only-upgrade install -y nodejs
     fi
 
-    # 3. Always update global NPM packages
     npm install -g npm@latest
     echo -e "${GREEN}[+] Active Node: $(which node) ($(node -v))${NC}"
     echo -e "${GREEN}[+] Active NPM:  $(which npm) ($(npm -v))${NC}"
@@ -204,24 +200,20 @@ main_menu() {
         local installed_files=()
         local uninstalled_files=()
 
-        # Gather local scripts or fetch catalog temporarily into /tmp
         local target_scripts=()
         for f in "$SCRIPT_DIR"/*.sh; do
             [ -f "$f" ] && target_scripts+=("$f")
         done
 
-        # If executed via curl (no local .sh files), fetch known catalog to /tmp/app-folder
         if [ ${#target_scripts[@]} -eq 0 ]; then
             mkdir -p /tmp/app-folder-cache
             for app_script in "${KNOWN_APPS[@]}"; do
-                if [ ! -f "/tmp/app-folder-cache/$app_script" ]; then
-                    curl -fsSL "$REPO_RAW_URL/$app_script" -o "/tmp/app-folder-cache/$app_script" 2>/dev/null
-                fi
+                # Always fetch fresh script to reflect recent changes
+                curl -fsSL "$REPO_RAW_URL/$app_script" -o "/tmp/app-folder-cache/$app_script" 2>/dev/null
                 [ -f "/tmp/app-folder-cache/$app_script" ] && target_scripts+=("/tmp/app-folder-cache/$app_script")
             done
         fi
 
-        # Check install status for each discovered app
         for f in "${target_scripts[@]}"; do
             if [ -f "$f" ]; then
                 source "$f"
