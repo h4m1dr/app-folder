@@ -17,9 +17,17 @@ CACHE_DIR="/tmp/app-folder-cache"
 PERM_DIR="/opt/app-folder/Node-js"
 
 CACHED_ROUTER_LATEST=""
+CACHED_ROUTER_LOCAL=""
 
+# Cached metadata query executed only once
 app_init_metadata() {
-    # Only fetch target version once if installed and not cached yet
+    if command -v 9router &> /dev/null; then
+        CACHED_ROUTER_LOCAL=$(9router -v 2>/dev/null || 9router --version 2>/dev/null)
+        [ -z "$CACHED_ROUTER_LOCAL" ] && CACHED_ROUTER_LOCAL="Installed"
+    else
+        CACHED_ROUTER_LOCAL="Not Installed"
+    fi
+
     if app_is_installed && [ -z "$CACHED_ROUTER_LATEST" ]; then
         if command -v npm &> /dev/null; then
             CACHED_ROUTER_LATEST=$(npm view 9router version 2>/dev/null)
@@ -44,26 +52,24 @@ get_current_port() {
 get_current_password() {
     if [ -f "$SERVICE_FILE" ]; then
         local pwd
-        pwd=$(grep -oP '(?<=ADMIN_PASSWORD=).*' "$SERVICE_FILE" 2>/dev/null | head -n1)
+        pwd=$(grep -oP '(?<=INITIAL_PASSWORD=).*' "$SERVICE_FILE" 2>/dev/null | head -n1)
         [ -n "$pwd" ] && echo "$pwd" && return
     fi
-    echo "admin123"
+    echo "admin123456"
 }
 
 get_version_status() {
-    if command -v 9router &> /dev/null; then
-        local cur_ver
-        cur_ver=$(9router -v 2>/dev/null || 9router --version 2>/dev/null)
-        [ -z "$cur_ver" ] && cur_ver="Installed"
+    [ -z "$CACHED_ROUTER_LOCAL" ] && app_init_metadata
 
+    if [ "$CACHED_ROUTER_LOCAL" != "Not Installed" ]; then
         if [ -n "$CACHED_ROUTER_LATEST" ]; then
-            if [ "$cur_ver" == "$CACHED_ROUTER_LATEST" ]; then
-                echo -e "${CLR_GRN}$cur_ver ${CLR_MUTED}(latest)${CLR_NC}"
+            if [ "$CACHED_ROUTER_LOCAL" == "$CACHED_ROUTER_LATEST" ]; then
+                echo -e "${CLR_GRN}$CACHED_ROUTER_LOCAL ${CLR_MUTED}(latest)${CLR_NC}"
             else
-                echo -e "${CLR_YLW}$cur_ver ${CLR_MUTED}-> ${CLR_GRN}$CACHED_ROUTER_LATEST${CLR_NC}"
+                echo -e "${CLR_YLW}$CACHED_ROUTER_LOCAL ${CLR_MUTED}-> ${CLR_GRN}$CACHED_ROUTER_LATEST${CLR_NC}"
             fi
         else
-            echo -e "${CLR_GRN}$cur_ver${CLR_NC}"
+            echo -e "${CLR_GRN}$CACHED_ROUTER_LOCAL${CLR_NC}"
         fi
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
@@ -111,7 +117,7 @@ User=root
 WorkingDirectory=/root
 Environment=PORT=$port
 Environment=HOST=$host
-Environment=ADMIN_PASSWORD=$pass
+Environment=INITIAL_PASSWORD=$pass
 Environment=CI=true
 Environment=NODE_ENV=production
 Environment=PATH=$(dirname "$CURRENT_NODE_BIN"):$PATH
@@ -168,7 +174,8 @@ app_configure_wizard() {
     local cfg_node_heap=""
     local cfg_cpu=""
 
-    if [[ "$in_adv" =~ ^([yY]|[yY][eE][sS])$ ]]; then
+    # Default is strictly NO
+    if [[ "$in_adv" =~ ^[yY]([eE][sS])?$ ]]; then
         echo ""
         echo -e "${CLR_MUTED}[Type 'n' to skip/disable any specific limit]${CLR_NC}"
 
@@ -195,7 +202,8 @@ app_configure_wizard() {
     echo ""
     echo -e " Do you want to manually edit the unit file before starting? [y/N]:"
     read -p " > " in_manual
-    if [[ "$in_manual" =~ ^([yY]|[yY][eE][sS])$ ]]; then
+    # Default is strictly NO
+    if [[ "$in_manual" =~ ^[yY]([eE][sS])?$ ]]; then
         local editor_bin="${EDITOR:-nano}"
         command -v "$editor_bin" &> /dev/null || editor_bin="vi"
         "$editor_bin" "$SERVICE_FILE"
@@ -238,6 +246,7 @@ app_update() {
     npm install -g 9router@latest
     systemctl restart 9router
     CACHED_ROUTER_LATEST=""
+    CACHED_ROUTER_LOCAL=""
     app_init_metadata
     echo -e "${CLR_GRN}[+] 9router updated and service restarted.${CLR_NC}"
 }
@@ -304,6 +313,7 @@ app_delete() {
     npm uninstall -g 9router 2>/dev/null
     rm -rf /root/.9router
     CACHED_ROUTER_LATEST=""
+    CACHED_ROUTER_LOCAL=""
     echo -e "${CLR_GRN}[+] 9router removed completely.${CLR_NC}"
 }
 
