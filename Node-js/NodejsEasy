@@ -142,22 +142,23 @@ wipe_permanent_folder() {
 }
 
 wipe_menu() {
+    local CLR_MUTED='\033[90m' # Subtle dark gray for secondary descriptions
     while true; do
         clear
         echo "======================================"
         echo "           System Wipe Menu           "
         echo "======================================"
-        echo " 1) Simple Cache Wipe"
-        echo "    └─ Cleans standard NPM and package download caches."
+        echo -e " 1) Simple Cache Wipe"
+        echo -e "    ${CLR_MUTED}(Cleans standard NPM and package download caches)${CLR_NC}"
         echo ""
-        echo " 2) Deep Residual Wipe"
-        echo "    └─ Purges leftover build junk, apt caches, and journal logs."
+        echo -e " 2) Deep Residual Wipe"
+        echo -e "    ${CLR_MUTED}(Purges leftover build junk, apt caches, and journal logs)${CLR_NC}"
         echo ""
-        echo " 3) Wipe Remote Script Cache"
-        echo "    └─ Deletes temporary runner folder (/tmp/app-folder-cache)."
+        echo -e " 3) Wipe Remote Script Cache"
+        echo -e "    ${CLR_MUTED}(Deletes temporary runner folder: /tmp/app-folder-cache)${CLR_NC}"
         echo ""
-        echo " 4) Wipe Permanent Application Folder"
-        echo "    └─ Deletes /opt/app-folder and global binary links."
+        echo -e " 4) Wipe Permanent Application Folder"
+        echo -e "    ${CLR_MUTED}(Deletes /opt/app-folder and global binary links)${CLR_NC}"
         echo ""
         echo -e " ${CLR_ORG}b) Back${CLR_NC}"
         echo -e " ${CLR_RED}e) Exit${CLR_NC}"
