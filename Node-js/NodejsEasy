@@ -21,6 +21,7 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Ultra-fast local check without calling apt/dpkg repeatedly
 ensure_system_deps() {
     [ -f "/usr/lib/x86_64-linux-gnu/libatomic.so.1" ] || [ -f "/usr/lib/libatomic.so.1" ] && return 0
     echo -e "${CLR_BLU}[*] Resolving runtime dependencies (libatomic1)...${CLR_NC}"
@@ -34,26 +35,12 @@ is_node_installed() {
     return 1
 }
 
-# Resolve active Node version and persistent default release
+# Fast local version checking without blocking network requests
 get_node_version_status() {
     if is_node_installed; then
-        local cur_v target_v
+        local cur_v
         cur_v=$(node -v 2>/dev/null)
-        
-        if [ -s "$HOME/.nvm/nvm.sh" ]; then
-            source "$HOME/.nvm/nvm.sh" 2>/dev/null
-            target_v=$(nvm version-remote --lts 2>/dev/null)
-        fi
-        
-        if [ -z "$target_v" ] || [[ "$target_v" == "N/A" ]]; then
-            target_v="$cur_v"
-        fi
-
-        if [[ "$cur_v" == "$target_v" ]]; then
-            echo -e "${CLR_GRN}$cur_v ${CLR_MUTED}(latest)${CLR_NC}"
-        else
-            echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}-> ${CLR_GRN}$target_v${CLR_NC}"
-        fi
+        echo -e "${CLR_GRN}$cur_v${CLR_NC}"
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
     fi
@@ -61,16 +48,9 @@ get_node_version_status() {
 
 get_npm_version_status() {
     if command -v npm &> /dev/null; then
-        local cur_npm target_npm
+        local cur_npm
         cur_npm=$(npm -v 2>/dev/null)
-        target_npm=$(npm view npm version 2>/dev/null)
-        [ -z "$target_npm" ] && target_npm="$cur_npm"
-
-        if [[ "$cur_npm" == "$target_npm" ]]; then
-            echo -e "${CLR_GRN}$cur_npm ${CLR_MUTED}(latest)${CLR_NC}"
-        else
-            echo -e "${CLR_YLW}$cur_npm ${CLR_MUTED}-> ${CLR_GRN}$target_npm${CLR_NC}"
-        fi
+        echo -e "${CLR_GRN}$cur_npm${CLR_NC}"
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
     fi
@@ -97,7 +77,6 @@ node_update() {
         echo -e "${CLR_BLU}[*] Detected NVM environment. Syncing and persisting LTS...${CLR_NC}"
         source "$HOME/.nvm/nvm.sh"
         nvm install --lts --reinstall-packages-from=current 2>/dev/null || true
-        # Make the installed version permanently default across all sessions
         local new_ver
         new_ver=$(nvm current 2>/dev/null)
         if [ -n "$new_ver" ] && [[ "$new_ver" != "none" ]]; then
@@ -300,7 +279,6 @@ others_menu() {
 
 # ================= Dynamic Main Menu =================
 main_menu() {
-    # Ensure NVM persistent default is sourced at startup
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
         source "$HOME/.nvm/nvm.sh" 2>/dev/null
     fi
@@ -326,7 +304,7 @@ main_menu() {
         if [ ${#target_scripts[@]} -eq 0 ]; then
             mkdir -p "$CACHE_DIR"
             for app_script in "${KNOWN_APPS[@]}"; do
-                curl -fsSL "$REPO_RAW_URL/$app_script" -o "$CACHE_DIR/$app_script" 2>/dev/null
+                [ ! -f "$CACHE_DIR/$app_script" ] && curl -fsSL "$REPO_RAW_URL/$app_script" -o "$CACHE_DIR/$app_script" 2>/dev/null
                 [ -f "$CACHE_DIR/$app_script" ] && target_scripts+=("$CACHE_DIR/$app_script")
             done
         fi
