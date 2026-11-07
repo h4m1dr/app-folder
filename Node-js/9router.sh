@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
 
-# Application settings
 APP_NAME="9router"
 ROUTER_PORT="8553"
 SERVICE_FILE="/etc/systemd/system/9router.service"
 
+# Returns 0 if natively installed, 1 if not installed
+app_is_installed() {
+    if command -v 9router &> /dev/null || [ -f "$SERVICE_FILE" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Resolve local Node.js runtime
+resolve_runtime() {
+    if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
+        echo -e "\033[0;31m[!] Node.js runtime not found.\033[0m"
+        return 1
+    fi
+    CURRENT_NODE_BIN=$(which node)
+    return 0
+}
+
 app_install() {
-    # Check if npm runtime exists
-    if ! command -v npm &> /dev/null; then
-        echo -e "\033[0;31m[!] NPM not found. Please install Node.js first.\033[0m"
+    if ! resolve_runtime; then
+        echo -e "\033[0;31m[!] Please install Node.js first.\033[0m"
         return
     fi
+
     echo -e "\033[0;34m[*] Installing 9router globally via npm...\033[0m"
     npm install -g 9router
 
@@ -21,8 +38,7 @@ app_install() {
         return
     fi
 
-    # Create systemd service unit
-    echo -e "\033[0;34m[*] Creating systemd service on port $ROUTER_PORT...\033[0m"
+    echo -e "\033[0;34m[*] Setting up systemd unit on port $ROUTER_PORT...\033[0m"
     cat <<SERVICE_EOF > "$SERVICE_FILE"
 [Unit]
 Description=9router Gateway Service
@@ -31,11 +47,12 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=$ROUTER_BIN --port$ROUTER_PORT
+ExecStart=$ROUTER_BIN --port $ROUTER_PORT
 Restart=always
 RestartSec=3
 Environment=PORT=$ROUTER_PORT
 Environment=HOST=127.0.0.1
+Environment=PATH=$(dirname "$CURRENT_NODE_BIN"):$PATH
 
 [Install]
 WantedBy=multi-user.target
@@ -47,11 +64,14 @@ SERVICE_EOF
     if systemctl is-active --quiet 9router; then
         echo -e "\033[0;32m[+] 9router successfully running on port $ROUTER_PORT\033[0m"
     else
-        echo -e "\033[0;31m[!] Failed to start 9router service. Check: journalctl -u 9router -n 20\033[0m"
+        echo -e "\033[0;31m[!] Failed to start service. Check: journalctl -u 9router -n 20\033[0m"
     fi
 }
 
 app_update() {
+    if ! resolve_runtime; then
+        return
+    fi
     echo -e "\033[0;34m[*] Updating 9router to latest version...\033[0m"
     npm install -g 9router@latest
     systemctl restart 9router
@@ -79,9 +99,9 @@ app_delete() {
     systemctl disable 9router 2>/dev/null
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload
-    npm uninstall -g 9router
+    npm uninstall -g 9router 2>/dev/null
     rm -rf /root/.9router
-    echo -e "\033[0;32m[+] 9router completely deleted.\033[0m"
+    echo -e "\033[0;32m[+] 9router removed completely.\033[0m"
 }
 
 app_menu() {
