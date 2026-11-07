@@ -23,7 +23,6 @@ fi
 
 ensure_system_deps() {
     [ -f "/usr/lib/x86_64-linux-gnu/libatomic.so.1" ] || [ -f "/usr/lib/libatomic.so.1" ] && return 0
-    echo -e "${CLR_BLU}[*] Resolving runtime dependencies (libatomic1)...${CLR_NC}"
     apt-get update -y > /dev/null 2>&1
     apt-get install -y libatomic1 > /dev/null 2>&1
 }
@@ -34,28 +33,23 @@ is_node_installed() {
     return 1
 }
 
-# ================= One-Time Initialization (No Loop Lag) =================
 TARGET_NODE_VER=""
 TARGET_NPM_VER=""
 
 init_runtime_metadata() {
-    echo -e "${CLR_MUTED}[*] Checking target updates for your system environment...${CLR_NC}"
+    if is_node_installed && [ -z "$TARGET_NODE_VER" ]; then
+        if [ -s "$HOME/.nvm/nvm.sh" ]; then
+            source "$HOME/.nvm/nvm.sh" 2>/dev/null
+            TARGET_NODE_VER=$(nvm version-remote --lts 2>/dev/null)
+        fi
+        local cur_node
+        cur_node=$(node -v 2>/dev/null)
+        [ -z "$TARGET_NODE_VER" ] || [ "$TARGET_NODE_VER" == "N/A" ] && TARGET_NODE_VER="$cur_node"
 
-    # Load NVM once if available
-    if [ -s "$HOME/.nvm/nvm.sh" ]; then
-        source "$HOME/.nvm/nvm.sh" 2>/dev/null
-        TARGET_NODE_VER=$(nvm version-remote --lts 2>/dev/null)
-    fi
-
-    # Fallback if offline or NVM wasn't found
-    local cur_node
-    cur_node=$(node -v 2>/dev/null)
-    [ -z "$TARGET_NODE_VER" ] || [ "$TARGET_NODE_VER" == "N/A" ] && TARGET_NODE_VER="$cur_node"
-
-    # Query matching NPM target release once
-    if command -v npm &> /dev/null; then
-        TARGET_NPM_VER=$(npm view npm version 2>/dev/null)
-        [ -z "$TARGET_NPM_VER" ] && TARGET_NPM_VER=$(npm -v 2>/dev/null)
+        if command -v npm &> /dev/null; then
+            TARGET_NPM_VER=$(npm view npm version 2>/dev/null)
+            [ -z "$TARGET_NPM_VER" ] && TARGET_NPM_VER=$(npm -v 2>/dev/null)
+        fi
     fi
 }
 
@@ -87,7 +81,6 @@ get_npm_version_status() {
     fi
 }
 
-# ================= Node.js Engine =================
 node_install() {
     if is_node_installed; then
         echo -e "${CLR_GRN}[+] Node.js is already installed at: $(which node)${CLR_NC}"
@@ -99,6 +92,7 @@ node_install() {
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
     apt-get update -y && apt-get install -y nodejs
+    TARGET_NODE_VER=""
     init_runtime_metadata
     echo -e "${CLR_GRN}[+] Node.js installed successfully.${CLR_NC}"
 }
@@ -121,6 +115,8 @@ node_update() {
     fi
 
     npm install -g npm@latest
+    TARGET_NODE_VER=""
+    TARGET_NPM_VER=""
     init_runtime_metadata
     echo -e "${CLR_GRN}[+] Active Node: $(which node) ($(node -v))${CLR_NC}"
     echo -e "${CLR_GRN}[+] Active NPM:  $(which npm) ($(npm -v))${CLR_NC}"
@@ -132,7 +128,8 @@ node_delete() {
     apt-get autoremove -y 2>/dev/null
     rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg
     rm -rf /root/.npm /root/.node-gyp /usr/local/lib/node_modules /usr/lib/node_modules
-    init_runtime_metadata
+    TARGET_NODE_VER=""
+    TARGET_NPM_VER=""
     echo -e "${CLR_GRN}[+] Node.js removed.${CLR_NC}"
 }
 
@@ -170,7 +167,6 @@ node_menu() {
     done
 }
 
-# ================= Wipe Sub-Menu =================
 wipe_simple() {
     echo -e "${CLR_BLU}[*] Running Simple Cache Wipe...${CLR_NC}"
     npm cache clean --force 2>/dev/null
@@ -240,7 +236,6 @@ wipe_menu() {
     done
 }
 
-# ================= Self-Updater =================
 self_update() {
     echo -e "${CLR_BLU}[*] Reinstalling and updating scripts from GitHub...${CLR_NC}"
     rm -rf "$CACHE_DIR"
@@ -261,7 +256,6 @@ self_update() {
     fi
 }
 
-# ================= Others Sub-Menu =================
 others_menu() {
     local uninstalled_files=("$@")
     while true; do
@@ -311,12 +305,9 @@ others_menu() {
     done
 }
 
-# ================= Dynamic Main Menu =================
 main_menu() {
-    # 1. Fetch remote version metadata once at launch
     init_runtime_metadata
 
-    # 2. Discover local or cached module scripts once
     local target_scripts=()
     for f in "$SCRIPT_DIR"/*.sh; do
         [ -f "$f" ] && target_scripts+=("$f")
@@ -330,7 +321,6 @@ main_menu() {
         done
     fi
 
-    # Initialize sub-modules once if they support metadata gathering
     for f in "${target_scripts[@]}"; do
         if [ -f "$f" ]; then
             source "$f"
@@ -338,7 +328,6 @@ main_menu() {
         fi
     done
 
-    # 3. Pure UI rendering loop (zero network requests, instantaneous redraw)
     while true; do
         clear
         echo "======================================"
