@@ -17,7 +17,6 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Ensure required runtime libraries (libatomic1 for modern Node.js versions)
 ensure_system_deps() {
     if ! dpkg -s libatomic1 &> /dev/null; then
         echo -e "${BLUE}[*] Resolving missing runtime library (libatomic1)...${NC}"
@@ -100,7 +99,7 @@ node_menu() {
             2) node_update; read -p "Press Enter to continue..." ;;
             3) node_delete; read -p "Press Enter to continue..." ;;
             b|B) break ;;
-            *) sleep 1 ;;
+            *) ;; # Ignore invalid inputs, stay in menu
         esac
     done
 }
@@ -273,6 +272,7 @@ main_menu() {
             clear
             exit 0
         fi
+        # If any invalid choice or enter is pressed, while true repeats cleanly
     done
 }
 
