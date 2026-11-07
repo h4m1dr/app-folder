@@ -34,7 +34,7 @@ app_init_metadata() {
         CACHED_LOCAL_VER="Not Installed"
     fi
 
-    if [ -f "$BIN_PATH" ] && [ -z "$CACHED_REMOTE_VER" ]; then
+    if app_is_installed && [ -z "$CACHED_REMOTE_VER" ]; then
         CACHED_REMOTE_VER=$(curl -fsSL https://api.github.com/repos/authelia/authelia/releases/latest 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     fi
 }
@@ -94,12 +94,10 @@ generate_configuration() {
 
     mkdir -p "$INSTALL_DIR"
 
-    # Generate random 64-char secrets if not already present
     local jwt_secret=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 48)
     local sess_secret=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 48)
     local enc_key=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 64)
 
-    # Format protected domains into JSON array
     local domain_rules=""
     IFS=',' read -ra ADDR <<< "$protected_domains"
     for d in "${ADDR[@]}"; do
@@ -265,17 +263,14 @@ user_add_or_update() {
         return
     fi
 
-    # Create users_database.yml if missing
     if [ ! -f "$USERS_FILE" ]; then
         cat <<EOF > "$USERS_FILE"
 users:
 EOF
     fi
 
-    # Check if user already exists
     if grep -q "^  $u_name:" "$USERS_FILE"; then
         echo -e "${CLR_YLW}[*] User '$u_name' exists. Updating password...${CLR_NC}"
-        # Update user block
         sed -i "/^  $u_name:/,/^    groups:/ s|^    password:.*|    password: '$hash_output'|" "$USERS_FILE"
     else
         cat <<EOF >> "$USERS_FILE"
@@ -375,7 +370,6 @@ app_delete() {
 }
 
 app_menu() {
-    app_init_metadata
     while true; do
         clear
         echo "======================================"
@@ -400,6 +394,7 @@ app_menu() {
         echo " 9) Status & Live Logs"
         echo " 10) Delete Authelia"
         echo ""
+        echo -e " ${CLR_ORG}b) Back${CLR_NC}"
         echo -e " ${CLR_RED}e) Exit${CLR_NC}"
         echo "--------------------------------------"
         read -p " Select option: " choice
@@ -414,10 +409,9 @@ app_menu() {
             8) systemctl restart authelia; echo -e "${CLR_GRN}[+] Restarted.${CLR_NC}"; read -p "Press Enter to continue..." ;;
             9) app_status; read -p "Press Enter to continue..." ;;
             10) app_delete; read -p "Press Enter to continue..." ;;
+            b|B) break ;;
             e|E) clear; exit 0 ;;
             *) ;;
         esac
     done
 }
-
-app_menu
