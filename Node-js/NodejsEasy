@@ -8,13 +8,16 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_RAW_URL="https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js"
+
+# Catalog of known modules in repo (for remote curl runs)
+KNOWN_APPS=("9router.sh")
 
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}[!] Please run as root (sudo).${NC}"
     exit 1
 fi
 
-# Simple check for main menu header (only checks if installed or not)
 is_node_installed() {
     if command -v node &> /dev/null; then
         return 0
@@ -38,17 +41,29 @@ node_install() {
 }
 
 node_update() {
-    echo -e "${BLUE}[*] Updating Node.js & NPM...${NC}"
-    apt-get update -y && apt-get --only-upgrade install -y nodejs
+    echo -e "${BLUE}[*] Checking and updating Node.js & NPM...${NC}"
+    
+    # 1. Update NVM runtime if NVM is detected
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        echo -e "${BLUE}[*] Detected NVM environment. Syncing LTS...${NC}"
+        source "$HOME/.nvm/nvm.sh"
+        nvm install --lts --reinstall-packages-from=current 2>/dev/null || true
+    # 2. Update APT packages if installed via system package manager
+    elif dpkg -l | grep -q "^ii.*nodejs"; then
+        echo -e "${BLUE}[*] Updating via APT repository...${NC}"
+        apt-get update -y && apt-get --only-upgrade install -y nodejs
+    fi
+
+    # 3. Always update global NPM packages
     npm install -g npm@latest
-    echo -e "${GREEN}[+] Node.js: $(node -v)${NC}"
-    echo -e "${GREEN}[+] NPM:     $(npm -v)${NC}"
+    echo -e "${GREEN}[+] Active Node: $(which node) ($(node -v))${NC}"
+    echo -e "${GREEN}[+] Active NPM:  $(which npm) ($(npm -v))${NC}"
 }
 
 node_delete() {
     echo -e "${YELLOW}[!] Purging Node.js and global packages...${NC}"
-    apt-get purge -y nodejs npm
-    apt-get autoremove -y
+    apt-get purge -y nodejs npm 2>/dev/null
+    apt-get autoremove -y 2>/dev/null
     rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg
     rm -rf /root/.npm /root/.node-gyp /usr/local/lib/node_modules /usr/lib/node_modules
     echo -e "${GREEN}[+] Node.js removed.${NC}"
@@ -117,7 +132,7 @@ others_menu() {
                 source "$selected_file"
                 if declare -f app_menu > /dev/null; then
                     app_menu
-                    break # Break back to refresh status in main menu
+                    break
                 fi
             fi
         elif [[ "$choice" =~ ^[bB]$ ]]; then
@@ -186,13 +201,29 @@ main_menu() {
         echo "--------------------------------------"
         echo " 1) Node js"
 
-        # Categorize apps into Installed vs Others (Instant local check)
         local installed_files=()
         local uninstalled_files=()
 
+        # Gather local scripts or fetch catalog temporarily into /tmp
+        local target_scripts=()
         for f in "$SCRIPT_DIR"/*.sh; do
+            [ -f "$f" ] && target_scripts+=("$f")
+        done
+
+        # If executed via curl (no local .sh files), fetch known catalog to /tmp/app-folder
+        if [ ${#target_scripts[@]} -eq 0 ]; then
+            mkdir -p /tmp/app-folder-cache
+            for app_script in "${KNOWN_APPS[@]}"; do
+                if [ ! -f "/tmp/app-folder-cache/$app_script" ]; then
+                    curl -fsSL "$REPO_RAW_URL/$app_script" -o "/tmp/app-folder-cache/$app_script" 2>/dev/null
+                fi
+                [ -f "/tmp/app-folder-cache/$app_script" ] && target_scripts+=("/tmp/app-folder-cache/$app_script")
+            done
+        fi
+
+        # Check install status for each discovered app
+        for f in "${target_scripts[@]}"; do
             if [ -f "$f" ]; then
-                # Load script check function
                 source "$f"
                 if declare -f app_is_installed > /dev/null && app_is_installed; then
                     installed_files+=("$f")
@@ -202,7 +233,6 @@ main_menu() {
             fi
         done
 
-        # Render installed apps directly on main menu
         local idx=2
         for f in "${installed_files[@]}"; do
             local base_name
