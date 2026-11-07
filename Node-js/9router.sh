@@ -157,15 +157,26 @@ app_configure_wizard() {
         [[ ! "$in_cpu" =~ ^[nN]$ ]] && cfg_cpu="${in_cpu:-80%}"
     fi
 
-    echo -e "${CLR_BLU}[*] Applying configuration and updating service...${CLR_NC}"
-    if generate_systemd_unit "$cfg_port" "$cfg_host" "$cfg_mem_max" "$cfg_mem_high" "$cfg_node_heap" "$cfg_cpu"; then
-        systemctl restart 9router
-        sleep 1
-        if systemctl is-active --quiet 9router; then
-            echo -e "${CLR_GRN}[+] 9router successfully running with updated settings!${CLR_NC}"
-        else
-            echo -e "${CLR_RED}[!] Service failed to start. Check option 7 (Status & Logs).${CLR_NC}"
-        fi
+    echo -e "${CLR_BLU}[*] Generating service unit...${CLR_NC}"
+    generate_systemd_unit "$cfg_port" "$cfg_host" "$cfg_mem_max" "$cfg_mem_high" "$cfg_node_heap" "$cfg_cpu"
+
+    echo ""
+    echo -e " Do you want to manually edit the unit file before starting? [y/N]:"
+    read -p " > " in_manual
+    if [[ "$in_manual" =~ ^([yY]|[yY][eE][sS])$ ]]; then
+        local editor_bin="${EDITOR:-nano}"
+        command -v "$editor_bin" &> /dev/null || editor_bin="vi"
+        "$editor_bin" "$SERVICE_FILE"
+        systemctl daemon-reload
+    fi
+
+    echo -e "${CLR_BLU}[*] Starting 9router service...${CLR_NC}"
+    systemctl restart 9router
+    sleep 1
+    if systemctl is-active --quiet 9router; then
+        echo -e "${CLR_GRN}[+] 9router successfully running with updated settings!${CLR_NC}"
+    else
+        echo -e "${CLR_RED}[!] Service failed to start. Check option 7 (Status & Logs).${CLR_NC}"
     fi
 }
 
