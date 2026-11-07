@@ -34,34 +34,31 @@ is_node_installed() {
     return 1
 }
 
-# Resolve active Node version and system-compatible target release
+# Resolve active Node version and persistent default release
 get_node_version_status() {
     if is_node_installed; then
         local cur_v target_v
         cur_v=$(node -v 2>/dev/null)
         
-        # Determine compatible target for active environment
         if [ -s "$HOME/.nvm/nvm.sh" ]; then
             source "$HOME/.nvm/nvm.sh" 2>/dev/null
             target_v=$(nvm version-remote --lts 2>/dev/null)
         fi
         
-        # Fallback to current major branch LTS if remote check is unreachable
-        if [ -z "$target_v" ] \vert{}\vert{} [[ "$target_v" == "N/A" ]]; then
+        if [ -z "$target_v" ] || [[ "$target_v" == "N/A" ]]; then
             target_v="$cur_v"
         fi
 
-        if [ "$cur_v" == "$target_v" ]; then
+        if [[ "$cur_v" == "$target_v" ]]; then
             echo -e "${CLR_GRN}$cur_v ${CLR_MUTED}(latest)${CLR_NC}"
         else
-            echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}->${CLR_GRN}$target_v${CLR_NC}"
+            echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}-> ${CLR_GRN}$target_v${CLR_NC}"
         fi
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
     fi
 }
 
-# Resolve active NPM version and matching compatible upstream release
 get_npm_version_status() {
     if command -v npm &> /dev/null; then
         local cur_npm target_npm
@@ -69,10 +66,10 @@ get_npm_version_status() {
         target_npm=$(npm view npm version 2>/dev/null)
         [ -z "$target_npm" ] && target_npm="$cur_npm"
 
-        if [ "$cur_npm" == "$target_npm" ]; then
+        if [[ "$cur_npm" == "$target_npm" ]]; then
             echo -e "${CLR_GRN}$cur_npm ${CLR_MUTED}(latest)${CLR_NC}"
         else
-            echo -e "${CLR_YLW}$cur_npm ${CLR_MUTED}->${CLR_GRN}$target_npm${CLR_NC}"
+            echo -e "${CLR_YLW}$cur_npm ${CLR_MUTED}-> ${CLR_GRN}$target_npm${CLR_NC}"
         fi
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
@@ -97,17 +94,24 @@ node_install() {
 node_update() {
     echo -e "${CLR_BLU}[*] Checking and updating Node.js & NPM...${CLR_NC}"
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
-        echo -e "${CLR_BLU}[*] Detected NVM environment. Syncing LTS...${CLR_NC}"
+        echo -e "${CLR_BLU}[*] Detected NVM environment. Syncing and persisting LTS...${CLR_NC}"
         source "$HOME/.nvm/nvm.sh"
         nvm install --lts --reinstall-packages-from=current 2>/dev/null || true
+        # Make the installed version permanently default across all sessions
+        local new_ver
+        new_ver=$(nvm current 2>/dev/null)
+        if [ -n "$new_ver" ] && [[ "$new_ver" != "none" ]]; then
+            nvm alias default "$new_ver" >/dev/null 2>&1
+            nvm use default >/dev/null 2>&1
+        fi
     elif dpkg -l 2>/dev/null | grep -q "^ii.*nodejs"; then
         echo -e "${CLR_BLU}[*] Updating via APT repository...${CLR_NC}"
         apt-get update -y && apt-get --only-upgrade install -y nodejs
     fi
 
     npm install -g npm@latest
-    echo -e "${CLR_GRN}[+] Active Node:$(which node) ($(node -v))${CLR_NC}"
-    echo -e "${CLR_GRN}[+] Active NPM:$(which npm) ($(npm -v))${CLR_NC}"
+    echo -e "${CLR_GRN}[+] Active Node: $(which node) ($(node -v))${CLR_NC}"
+    echo -e "${CLR_GRN}[+] Active NPM:  $(which npm) ($(npm -v))${CLR_NC}"
 }
 
 node_delete() {
@@ -267,7 +271,7 @@ others_menu() {
         for f in "${uninstalled_files[@]}"; do
             local base_name
             base_name=$(basename "$f" .sh)
-            echo " $idx)$base_name"
+            echo " $idx) $base_name"
             ((idx++))
         done
         echo ""
@@ -296,6 +300,11 @@ others_menu() {
 
 # ================= Dynamic Main Menu =================
 main_menu() {
+    # Ensure NVM persistent default is sourced at startup
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        source "$HOME/.nvm/nvm.sh" 2>/dev/null
+    fi
+
     while true; do
         clear
         echo "======================================"
@@ -337,7 +346,7 @@ main_menu() {
         for f in "${installed_files[@]}"; do
             local base_name
             base_name=$(basename "$f" .sh)
-            echo " $idx)$base_name"
+            echo " $idx) $base_name"
             ((idx++))
         done
 
