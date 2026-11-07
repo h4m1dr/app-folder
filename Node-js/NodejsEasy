@@ -34,20 +34,45 @@ is_node_installed() {
     return 1
 }
 
+# Resolve active Node version and system-compatible target release
 get_node_version_status() {
     if is_node_installed; then
-        local cur_v latest_v
+        local cur_v target_v
         cur_v=$(node -v 2>/dev/null)
-        # Fetch LTS or latest remote release cleanly
-        latest_v=$(curl -fsSL --max-time 2 https://nodejs.org/dist/index.tab 2>/dev/null | awk 'NR==2 {print $1}')
-        if [ -n "$latest_v" ] && [ -n "$cur_v" ]; then
-            if [ "$cur_v" == "$latest_v" ]; then
-                echo -e "${CLR_GRN}$cur_v ${CLR_MUTED}(latest)${CLR_NC}"
-            else
-                echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}-> ${CLR_GRN}$latest_v${CLR_NC}"
-            fi
+        
+        # Determine compatible target for active environment
+        if [ -s "$HOME/.nvm/nvm.sh" ]; then
+            source "$HOME/.nvm/nvm.sh" 2>/dev/null
+            target_v=$(nvm version-remote --lts 2>/dev/null)
+        fi
+        
+        # Fallback to current major branch LTS if remote check is unreachable
+        if [ -z "$target_v" ] \vert{}\vert{} [[ "$target_v" == "N/A" ]]; then
+            target_v="$cur_v"
+        fi
+
+        if [ "$cur_v" == "$target_v" ]; then
+            echo -e "${CLR_GRN}$cur_v ${CLR_MUTED}(latest)${CLR_NC}"
         else
-            echo -e "${CLR_GRN}$cur_v${CLR_NC}"
+            echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}->${CLR_GRN}$target_v${CLR_NC}"
+        fi
+    else
+        echo -e "${CLR_RED}Not Installed${CLR_NC}"
+    fi
+}
+
+# Resolve active NPM version and matching compatible upstream release
+get_npm_version_status() {
+    if command -v npm &> /dev/null; then
+        local cur_npm target_npm
+        cur_npm=$(npm -v 2>/dev/null)
+        target_npm=$(npm view npm version 2>/dev/null)
+        [ -z "$target_npm" ] && target_npm="$cur_npm"
+
+        if [ "$cur_npm" == "$target_npm" ]; then
+            echo -e "${CLR_GRN}$cur_npm ${CLR_MUTED}(latest)${CLR_NC}"
+        else
+            echo -e "${CLR_YLW}$cur_npm ${CLR_MUTED}->${CLR_GRN}$target_npm${CLR_NC}"
         fi
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
@@ -81,8 +106,8 @@ node_update() {
     fi
 
     npm install -g npm@latest
-    echo -e "${CLR_GRN}[+] Active Node: $(which node) ($(node -v))${CLR_NC}"
-    echo -e "${CLR_GRN}[+] Active NPM:  $(which npm) ($(npm -v))${CLR_NC}"
+    echo -e "${CLR_GRN}[+] Active Node:$(which node) ($(node -v))${CLR_NC}"
+    echo -e "${CLR_GRN}[+] Active NPM:$(which npm) ($(npm -v))${CLR_NC}"
 }
 
 node_delete() {
@@ -91,7 +116,7 @@ node_delete() {
     apt-get autoremove -y 2>/dev/null
     rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg
     rm -rf /root/.npm /root/.node-gyp /usr/local/lib/node_modules /usr/lib/node_modules
-    echo -e "${CLR_GRN}[+] Node.js removed.${NC}"
+    echo -e "${CLR_GRN}[+] Node.js removed.${CLR_NC}"
 }
 
 node_menu() {
@@ -101,7 +126,8 @@ node_menu() {
         echo "          Node.js Engine Menu         "
         echo "======================================"
         if is_node_installed; then
-            echo -e " Version     : $(get_node_version_status)"
+            echo -e " Node Version: $(get_node_version_status)"
+            echo -e " NPM Version : $(get_npm_version_status)"
             echo -e " Binary Path : ${CLR_BLU}$(which node)${CLR_NC}"
             echo -e " NPM Global  : ${CLR_BLU}$(npm root -g 2>/dev/null)${CLR_NC}"
         else
@@ -241,7 +267,7 @@ others_menu() {
         for f in "${uninstalled_files[@]}"; do
             local base_name
             base_name=$(basename "$f" .sh)
-            echo " $idx) $base_name"
+            echo " $idx)$base_name"
             ((idx++))
         done
         echo ""
@@ -275,7 +301,8 @@ main_menu() {
         echo "======================================"
         echo "          NodejsEasy Manager          "
         echo "======================================"
-        echo -e " Node.js State : $(get_node_version_status)"
+        echo -e " Node Version  : $(get_node_version_status)"
+        echo -e " NPM Version   : $(get_npm_version_status)"
         echo "--------------------------------------"
         echo " 1) Node js"
 
@@ -310,7 +337,7 @@ main_menu() {
         for f in "${installed_files[@]}"; do
             local base_name
             base_name=$(basename "$f" .sh)
-            echo " $idx) $base_name"
+            echo " $idx)$base_name"
             ((idx++))
         done
 
