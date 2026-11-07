@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# ==============================================================================
+# Authelia Native Manager & Access Control Engine
+# ==============================================================================
+
 INSTALL_DIR="/opt/authelia"
 BIN_PATH="/usr/local/bin/authelia"
 SERVICE_FILE="/etc/systemd/system/authelia.service"
@@ -19,7 +23,7 @@ CLR_NC='\033[0m'
 
 get_version() {
     if [ -f "$BIN_PATH" ]; then
-        "$BIN_PATH" --version 2>/dev/null | awk '{print $3}'
+        "$BIN_PATH" --version 2>/dev/null | awk '{print $3}' || echo "Installed"
     else
         echo "Not Installed"
     fi
@@ -58,6 +62,7 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$BIN_PATH --config $CONFIG_FILE
 Restart=always
 RestartSec=3
+LimitNOFILE=65535
 StandardOutput=journal
 StandardError=journal
 
@@ -83,7 +88,7 @@ user_add_or_update() {
 
     local hash
     hash=$("$BIN_PATH" crypto hash generate argon2 --password "$u_pass" 2>/dev/null | grep 'Digest:' | awk '{print $2}')
-    [ -z "$hash" ] && { echo -e "${CLR_RED}[!] Hash failed.${CLR_NC}"; return; }
+    [ -z "$hash" ] && { echo -e "${CLR_RED}[!] Hash calculation failed.${CLR_NC}"; return; }
 
     mkdir -p "$INSTALL_DIR"
     [ ! -f "$USERS_FILE" ] && echo "users:" > "$USERS_FILE"
@@ -103,7 +108,49 @@ U_EOF
     fi
 
     systemctl restart authelia 2>/dev/null
-    echo -e "${CLR_GRN}[+] User updated successfully!${CLR_NC}"
+    echo -e "${CLR_GRN}[+] User updated successfully in $USERS_FILE${CLR_NC}"
+}
+
+manage_domain_rules() {
+    echo ""
+    echo -e "${CLR_CYN}====================================================${CLR_NC}"
+    echo -e "${CLR_CYN}       Authelia Access Control Rule Manager         ${CLR_NC}"
+    echo -e "${CLR_CYN}====================================================${CLR_NC}"
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "${CLR_RED}[!] Configuration file not found at $CONFIG_FILE${CLR_NC}"
+        return
+    fi
+
+    echo -e "${CLR_BLU}[*] Current Access Rules Preview:${CLR_NC}"
+    awk '/rules:/,/^[a-z]/' "$CONFIG_FILE" | grep -E "(domain|policy)" | head -n 12
+    echo "----------------------------------------------------"
+
+    read -p " Enter Domain or Subdomain to protect (e.g. 9c.ykno.ir or *.ykno.ir): " in_dom
+    [ -z "$in_dom" ] && return
+
+    echo ""
+    echo " Select Access Policy for $in_dom:"
+    echo " 1) bypass     - Public access / No login required"
+    echo " 2) one_factor - Password only (Recommended for standard tools)"
+    echo " 3) two_factor - Password + 2FA TOTP (High Security)"
+    read -p " Selection [1-3, Default: 1]: " pol_choice
+    local pol="bypass"
+    case $pol_choice in
+        2) pol="one_factor" ;;
+        3) pol="two_factor" ;;
+        *) pol="bypass" ;;
+    esac
+
+    # درج قانون در ابتدای بلاک rules برای داشتن بالاترین اولویت اجرایی
+    if grep -q "rules:" "$CONFIG_FILE"; then
+        sed -i "/rules:/a \      - domain: \"$in_dom\"\n        policy: $pol" "$CONFIG_FILE"
+        echo -e "${CLR_BLU}[*] Testing and reloading Authelia...${CLR_NC}"
+        systemctl restart authelia
+        echo -e "${CLR_GRN}[+] Rule successfully registered: '$in_dom' -> Policy: '$pol'${CLR_NC}"
+    else
+        echo -e "${CLR_RED}[!] Could not locate 'rules:' section inside $CONFIG_FILE${CLR_NC}"
+    fi
 }
 
 get_registration_qr() {
@@ -118,10 +165,10 @@ get_registration_qr() {
             echo ""
             echo "Open this link in your browser to scan the QR Code."
         else
-            echo -e "${CLR_YLW}[*] No link in notification file yet.${CLR_NC}"
+            echo -e "${CLR_YLW}[*] No registration link found in notification file.${CLR_NC}"
         fi
     else
-        echo -e "${CLR_YLW}[*] Notification file not found.${CLR_NC}"
+        echo -e "${CLR_YLW}[*] Notification file does not exist yet.${CLR_NC}"
     fi
 }
 
@@ -139,29 +186,32 @@ while true; do
     echo "======================================"
     echo "          Authelia Manager            "
     echo "======================================"
-    if [ -f "$BIN_PATH" ]; then
-        echo -e " Status  : ${CLR_GRN}Active (Installed)${CLR_NC}"
-        echo -e " Version : ${CLR_GRN}$(get_version)${CLR_NC}"
+    if systemctl is-active --quiet authelia; then
+        echo -e " Status  : ${CLR_GRN}Active (Running)${CLR_NC}"
+    elif [ -f "$SERVICE_FILE" ]; then
+        echo -e " Status  : ${CLR_YLW}Stopped / Inactive${CLR_NC}"
     else
         echo -e " Status  : ${CLR_RED}Not Installed${CLR_NC}"
     fi
+    echo -e " Version : ${CLR_GRN}$(get_version)${CLR_NC}"
     echo "--------------------------------------"
     if [ ! -f "$BIN_PATH" ]; then
         echo " 1) Install Authelia"
     else
         echo " 1) Update Authelia Binary"
     fi
-    echo " 2) Add or Change User Password"
-    echo " 3) Get 2FA QR Code / Link"
-    echo " 4) Start Service"
-    echo " 5) Stop Service"
-    echo " 6) Restart Service"
-    echo " 7) View Status & Logs"
-    echo " 8) Delete Authelia"
+    echo " 2) Manage Access Rules (Add/Bypass Domains)"
+    echo " 3) Add or Change User Password"
+    echo " 4) Get 2FA QR Code / Link"
+    echo " 5) Start Service"
+    echo " 6) Stop Service"
+    echo " 7) Restart Service"
+    echo " 8) View Status & Logs"
+    echo " 9) Delete Authelia"
     echo ""
     echo -e " ${CLR_ORG}b) Back${CLR_NC}"
     echo "--------------------------------------"
-    read -p " Select option: " c
+    read -p " Select option [1-9, b]: " c
     case $c in
         1) 
             if [ ! -f "$BIN_PATH" ]; then
@@ -170,17 +220,18 @@ while true; do
                 systemctl stop authelia
                 download_binary
                 systemctl restart authelia
-                echo -e "${CLR_GRN}[+] Updated.${CLR_NC}"
+                echo -e "${CLR_GRN}[+] Binary updated.${CLR_NC}"
             fi
             read -p "Press Enter to continue..." ;;
-        2) user_add_or_update; read -p "Press Enter to continue..." ;;
-        3) get_registration_qr; read -p "Press Enter to continue..." ;;
-        4) systemctl start authelia; echo -e "${CLR_GRN}[+] Started.${CLR_NC}"; read -p "Press Enter to continue..." ;;
-        5) systemctl stop authelia; echo -e "${CLR_YLW}[*] Stopped.${CLR_NC}"; read -p "Press Enter to continue..." ;;
-        6) systemctl restart authelia; echo -e "${CLR_GRN}[+] Restarted.${CLR_NC}"; read -p "Press Enter to continue..." ;;
-        7) journalctl -u authelia -n 25 --no-pager; read -p "Press Enter to continue..." ;;
-        8) 
-            read -p " Delete Authelia? [y/N]: " conf
+        2) manage_domain_rules; read -p "Press Enter to continue..." ;;
+        3) user_add_or_update; read -p "Press Enter to continue..." ;;
+        4) get_registration_qr; read -p "Press Enter to continue..." ;;
+        5) systemctl start authelia; echo -e "${CLR_GRN}[+] Started.${CLR_NC}"; read -p "Press Enter to continue..." ;;
+        6) systemctl stop authelia; echo -e "${CLR_YLW}[*] Stopped.${CLR_NC}"; read -p "Press Enter to continue..." ;;
+        7) systemctl restart authelia; echo -e "${CLR_GRN}[+] Restarted.${CLR_NC}"; read -p "Press Enter to continue..." ;;
+        8) journalctl -u authelia -n 30 --no-pager; read -p "Press Enter to continue..." ;;
+        9) 
+            read -p " Delete Authelia completely? [y/N]: " conf
             if [[ "$conf" =~ ^[yY]$ ]]; then
                 systemctl stop authelia 2>/dev/null
                 systemctl disable authelia 2>/dev/null
