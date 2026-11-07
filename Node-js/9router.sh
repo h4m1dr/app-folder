@@ -16,6 +16,15 @@ REPO_RAW_URL="https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js"
 CACHE_DIR="/tmp/app-folder-cache"
 PERM_DIR="/opt/app-folder/Node-js"
 
+CACHED_ROUTER_LATEST=""
+
+# Called only ONCE at start
+app_init_metadata() {
+    if command -v npm &> /dev/null; then
+        CACHED_ROUTER_LATEST=$(npm view 9router version 2>/dev/null)
+    fi
+}
+
 app_is_installed() {
     [ -f "$SERVICE_FILE" ] && return 0
     return 1
@@ -30,12 +39,22 @@ get_current_port() {
     echo "8553"
 }
 
+# Renders instantly using memory cache without network calls
 get_version_status() {
     if command -v 9router &> /dev/null; then
         local cur_ver
         cur_ver=$(9router -v 2>/dev/null || 9router --version 2>/dev/null)
         [ -z "$cur_ver" ] && cur_ver="Installed"
-        echo -e "${CLR_GRN}$cur_ver${CLR_NC}"
+
+        if [ -n "$CACHED_ROUTER_LATEST" ] && [ "$cur_ver" != "Installed" ]; then
+            if [ "$cur_ver" == "$CACHED_ROUTER_LATEST" ]; then
+                echo -e "${CLR_GRN}$cur_ver ${CLR_MUTED}(latest)${CLR_NC}"
+            else
+                echo -e "${CLR_YLW}$cur_ver ${CLR_MUTED}-> ${CLR_GRN}$CACHED_ROUTER_LATEST${CLR_NC}"
+            fi
+        else
+            echo -e "${CLR_GRN}$cur_ver${CLR_NC}"
+        fi
     else
         echo -e "${CLR_RED}Not Installed${CLR_NC}"
     fi
@@ -65,7 +84,6 @@ generate_systemd_unit() {
         return 1
     fi
 
-    # Fixed: Passing explicit --host and -t to prevent interactive TUI exit
     local exec_cmd="$ROUTER_BIN --port $port --host $host -n -t --skip-update"
     if [ -n "$node_heap" ]; then
         exec_cmd="$CURRENT_NODE_BIN --max-old-space-size=$node_heap $ROUTER_BIN --port $port --host $host -n -t --skip-update"
@@ -185,6 +203,7 @@ app_install() {
     echo -e "${CLR_BLU}[*] Installing 9router globally via npm...${CLR_NC}"
     npm install -g 9router
 
+    app_init_metadata
     app_configure_wizard
     systemctl enable 9router 2>/dev/null
 }
@@ -200,6 +219,7 @@ app_update() {
     echo -e "${CLR_BLU}[*] Updating 9router to latest version...${CLR_NC}"
     npm install -g 9router@latest
     systemctl restart 9router
+    app_init_metadata
     echo -e "${CLR_GRN}[+] 9router updated and service restarted.${CLR_NC}"
 }
 
