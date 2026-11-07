@@ -35,28 +35,31 @@ is_node_installed() {
 
 TARGET_NODE_VER=""
 TARGET_NPM_VER=""
+CACHED_NODE_LOCAL=""
+CACHED_NPM_LOCAL=""
 
 init_runtime_metadata() {
-    if is_node_installed && [ -z "$TARGET_NODE_VER" ]; then
+    echo -e "${CLR_MUTED}[*] Gathering environment variables and system target releases...${CLR_NC}"
+
+    if is_node_installed; then
+        CACHED_NODE_LOCAL=$(node -v 2>/dev/null)
         if [ -s "$HOME/.nvm/nvm.sh" ]; then
             source "$HOME/.nvm/nvm.sh" 2>/dev/null
             TARGET_NODE_VER=$(nvm version-remote --lts 2>/dev/null)
         fi
-        local cur_node
-        cur_node=$(node -v 2>/dev/null)
-        [ -z "$TARGET_NODE_VER" ] || [ "$TARGET_NODE_VER" == "N/A" ] && TARGET_NODE_VER="$cur_node"
+        [ -z "$TARGET_NODE_VER" ] || [ "$TARGET_NODE_VER" == "N/A" ] && TARGET_NODE_VER="$CACHED_NODE_LOCAL"
 
         if command -v npm &> /dev/null; then
+            CACHED_NPM_LOCAL=$(npm -v 2>/dev/null)
             TARGET_NPM_VER=$(npm view npm version 2>/dev/null)
-            [ -z "$TARGET_NPM_VER" ] && TARGET_NPM_VER=$(npm -v 2>/dev/null)
+            [ -z "$TARGET_NPM_VER" ] && TARGET_NPM_VER="$CACHED_NPM_LOCAL"
         fi
     fi
 }
 
 get_node_version_status() {
     if is_node_installed; then
-        local cur_v
-        cur_v=$(node -v 2>/dev/null)
+        local cur_v="${CACHED_NODE_LOCAL:-$(node -v 2>/dev/null)}"
         if [ -n "$TARGET_NODE_VER" ] && [ "$cur_v" != "$TARGET_NODE_VER" ]; then
             echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}-> ${CLR_GRN}$TARGET_NODE_VER${CLR_NC}"
         else
@@ -69,8 +72,7 @@ get_node_version_status() {
 
 get_npm_version_status() {
     if command -v npm &> /dev/null; then
-        local cur_npm
-        cur_npm=$(npm -v 2>/dev/null)
+        local cur_npm="${CACHED_NPM_LOCAL:-$(npm -v 2>/dev/null)}"
         if [ -n "$TARGET_NPM_VER" ] && [ "$cur_npm" != "$TARGET_NPM_VER" ]; then
             echo -e "${CLR_YLW}$cur_npm ${CLR_MUTED}-> ${CLR_GRN}$TARGET_NPM_VER${CLR_NC}"
         else
@@ -92,7 +94,6 @@ node_install() {
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
     apt-get update -y && apt-get install -y nodejs
-    TARGET_NODE_VER=""
     init_runtime_metadata
     echo -e "${CLR_GRN}[+] Node.js installed successfully.${CLR_NC}"
 }
@@ -115,8 +116,6 @@ node_update() {
     fi
 
     npm install -g npm@latest
-    TARGET_NODE_VER=""
-    TARGET_NPM_VER=""
     init_runtime_metadata
     echo -e "${CLR_GRN}[+] Active Node: $(which node) ($(node -v))${CLR_NC}"
     echo -e "${CLR_GRN}[+] Active NPM:  $(which npm) ($(npm -v))${CLR_NC}"
@@ -130,6 +129,8 @@ node_delete() {
     rm -rf /root/.npm /root/.node-gyp /usr/local/lib/node_modules /usr/lib/node_modules
     TARGET_NODE_VER=""
     TARGET_NPM_VER=""
+    CACHED_NODE_LOCAL=""
+    CACHED_NPM_LOCAL=""
     echo -e "${CLR_GRN}[+] Node.js removed.${CLR_NC}"
 }
 
@@ -193,7 +194,7 @@ wipe_cache_folder() {
 wipe_permanent_folder() {
     echo -e "${CLR_RED}[!] Warning: This will delete permanent repository directory (/opt/app-folder).${CLR_NC}"
     read -p " Are you sure you want to delete permanent folder? [y/N]: " confirm
-    if [[ "$confirm" =~ ^[yY]$ ]]; then
+    if [[ "$confirm" =~ ^[yY]([eE][sS])?$ ]]; then
         rm -rf /opt/app-folder
         rm -f /usr/local/bin/nodejs-easy
         echo -e "${CLR_GRN}[+] Permanent application files and system symlink wiped.${CLR_NC}"
