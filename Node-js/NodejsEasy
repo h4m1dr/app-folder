@@ -9,6 +9,8 @@ CLR_NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_RAW_URL="https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js"
+CACHE_DIR="/tmp/app-folder-cache"
+PERM_DIR="/opt/app-folder"
 
 KNOWN_APPS=("9router.sh")
 
@@ -17,10 +19,9 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Cached fast check for runtime libraries
 ensure_system_deps() {
     [ -f "/usr/lib/x86_64-linux-gnu/libatomic.so.1" ] || [ -f "/usr/lib/libatomic.so.1" ] && return 0
-    echo -e "${CLR_BLU}[*] Resolving missing runtime library (libatomic1)...${CLR_NC}"
+    echo -e "${CLR_BLU}[*] Resolving runtime dependencies (libatomic1)...${CLR_NC}"
     apt-get update -y > /dev/null 2>&1
     apt-get install -y libatomic1 > /dev/null 2>&1
 }
@@ -37,7 +38,7 @@ node_install() {
         echo -e "${CLR_GRN}[+] Node.js is already installed at: $(which node)${CLR_NC}"
         return
     fi
-    echo -e "${CLR_BLU}[*] Setting up Node.js repository (LTS)...${CLR_NC}"
+    echo -e "${CLR_BLU}[*] Setting up official NodeSource repository (LTS)...${CLR_NC}"
     apt-get update -y && apt-get install -y ca-certificates curl gnupg libatomic1
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes
@@ -47,7 +48,7 @@ node_install() {
 }
 
 node_update() {
-    echo -e "${CLR_BLU}[*] Checking and updating Node.js & NPM...${NC}"
+    echo -e "${CLR_BLU}[*] Checking and updating Node.js & NPM...${CLR_NC}"
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
         echo -e "${CLR_BLU}[*] Detected NVM environment. Syncing LTS...${CLR_NC}"
         source "$HOME/.nvm/nvm.sh"
@@ -97,6 +98,76 @@ node_menu() {
             1) node_install; read -p "Press Enter to continue..." ;;
             2) node_update; read -p "Press Enter to continue..." ;;
             3) node_delete; read -p "Press Enter to continue..." ;;
+            b|B) break ;;
+            e|E) clear; exit 0 ;;
+            *) ;;
+        esac
+    done
+}
+
+# ================= Wipe Sub-Menu =================
+wipe_simple() {
+    echo -e "${CLR_BLU}[*] Running Simple Cache Wipe...${CLR_NC}"
+    npm cache clean --force 2>/dev/null
+    rm -rf /root/.npm/_cacache /root/.node-gyp 2>/dev/null
+    echo -e "${CLR_GRN}[+] Standard package manager caches wiped.${CLR_NC}"
+}
+
+wipe_deep() {
+    echo -e "${CLR_BLU}[*] Running Deep System & Residual Wipe...${CLR_NC}"
+    npm cache clean --force 2>/dev/null
+    rm -rf /root/.npm /root/.node-gyp /tmp/npm* /tmp/v8* 2>/dev/null
+    apt-get clean -y >/dev/null 2>&1
+    apt-get autoremove --purge -y >/dev/null 2>&1
+    journalctl --vacuum-time=1d >/dev/null 2>&1
+    echo -e "${CLR_GRN}[+] Deep post-install residual files and build caches wiped.${CLR_NC}"
+}
+
+wipe_cache_folder() {
+    echo -e "${CLR_BLU}[*] Removing remote runner script cache ($CACHE_DIR)...${CLR_NC}"
+    rm -rf "$CACHE_DIR"
+    echo -e "${CLR_GRN}[+] Script runner cache directory removed.${CLR_NC}"
+}
+
+wipe_permanent_folder() {
+    echo -e "${CLR_RED}[!] Warning: This will delete permanent repository directory ($PERM_DIR).${CLR_NC}"
+    read -p " Are you sure you want to delete permanent folder? [y/N]: " confirm
+    if [[ "$confirm" =~ ^[yY]$ ]]; then
+        rm -rf "$PERM_DIR"
+        rm -f /usr/local/bin/nodejs-easy
+        echo -e "${CLR_GRN}[+] Permanent application files and system symlink wiped.${CLR_NC}"
+    else
+        echo -e "${CLR_YLW}[*] Operation aborted.${CLR_NC}"
+    fi
+}
+
+wipe_menu() {
+    while true; do
+        clear
+        echo "======================================"
+        echo "           System Wipe Menu           "
+        echo "======================================"
+        echo " 1) Simple Cache Wipe"
+        echo "    └─ Cleans standard NPM and package download caches."
+        echo ""
+        echo " 2) Deep Residual Wipe"
+        echo "    └─ Purges leftover build junk, apt caches, and journal logs."
+        echo ""
+        echo " 3) Wipe Remote Script Cache"
+        echo "    └─ Deletes temporary runner folder (/tmp/app-folder-cache)."
+        echo ""
+        echo " 4) Wipe Permanent Application Folder"
+        echo "    └─ Deletes /opt/app-folder and global binary links."
+        echo ""
+        echo -e " ${CLR_ORG}b) Back${CLR_NC}"
+        echo -e " ${CLR_RED}e) Exit${CLR_NC}"
+        echo "--------------------------------------"
+        read -p " Select option: " choice
+        case $choice in
+            1) wipe_simple; read -p "Press Enter to continue..." ;;
+            2) wipe_deep; read -p "Press Enter to continue..." ;;
+            3) wipe_cache_folder; read -p "Press Enter to continue..." ;;
+            4) wipe_permanent_folder; read -p "Press Enter to continue..." ;;
             b|B) break ;;
             e|E) clear; exit 0 ;;
             *) ;;
@@ -154,51 +225,6 @@ others_menu() {
     done
 }
 
-# ================= Smart Wiper =================
-smart_wipe() {
-    echo -e "${CLR_BLU}[*] Scanning residual caches & junk...${CLR_NC}"
-    local wipe_items=()
-    local clean_npm=0
-    local clean_deb=0
-    local clean_logs=0
-
-    if [ -d "/root/.npm" ] && [ "$(du -s /root/.npm 2>/dev/null | cut -f1)" -gt 1024 ]; then
-        wipe_items+=("NPM Cache ($(du -sh /root/.npm 2>/dev/null | cut -f1))")
-        clean_npm=1
-    fi
-
-    local DEB_COUNT
-    DEB_COUNT=$(find /var/cache/apt/archives -type f -name '*.deb' 2>/dev/null | wc -l)
-    if [ "$DEB_COUNT" -gt 0 ]; then
-        wipe_items+=("APT Cached packages ($DEB_COUNT files)")
-        clean_deb=1
-    fi
-
-    local LOG_SZ
-    LOG_SZ=$(journalctl --disk-usage 2>/dev/null | grep -o '[0-9\.]\+[KMG]')
-    if [ -n "$LOG_SZ" ]; then
-        wipe_items+=("Systemd Logs ($LOG_SZ, vacuum to 2d)")
-        clean_logs=1
-    fi
-
-    if [ ${#wipe_items[@]} -eq 0 ]; then
-        echo -e "${CLR_GRN}[+] Everything is clean. Nothing to wipe.${CLR_NC}"
-        return
-    fi
-
-    echo -e "${CLR_YLW}Pending cleanup items:${CLR_NC}"
-    for itm in "${wipe_items[@]}"; do
-        echo -e " - $itm"
-    done
-
-    echo -e "${CLR_BLU}[*] Wiping...${CLR_NC}"
-    [ "$clean_npm" -eq 1 ] && { npm cache clean --force 2>/dev/null; rm -rf /root/.npm /root/.node-gyp; }
-    [ "$clean_deb" -eq 1 ] && { apt-get clean -y; apt-get autoremove --purge -y; }
-    [ "$clean_logs" -eq 1 ] && journalctl --vacuum-time=2d >/dev/null 2>&1
-
-    echo -e "${CLR_GRN}[+] Cleanup complete!${CLR_NC}"
-}
-
 # ================= Dynamic Main Menu =================
 main_menu() {
     while true; do
@@ -222,13 +248,12 @@ main_menu() {
             [ -f "$f" ] && target_scripts+=("$f")
         done
 
+        # If running via curl without local files, always pull latest from GitHub
         if [ ${#target_scripts[@]} -eq 0 ]; then
-            mkdir -p /tmp/app-folder-cache
+            mkdir -p "$CACHE_DIR"
             for app_script in "${KNOWN_APPS[@]}"; do
-                if [ ! -f "/tmp/app-folder-cache/$app_script" ]; then
-                    curl -fsSL "$REPO_RAW_URL/$app_script" -o "/tmp/app-folder-cache/$app_script" 2>/dev/null
-                fi
-                [ -f "/tmp/app-folder-cache/$app_script" ] && target_scripts+=("/tmp/app-folder-cache/$app_script")
+                curl -fsSL "$REPO_RAW_URL/$app_script" -o "$CACHE_DIR/$app_script" 2>/dev/null
+                [ -f "$CACHE_DIR/$app_script" ] && target_scripts+=("$CACHE_DIR/$app_script")
             done
         fi
 
@@ -276,8 +301,7 @@ main_menu() {
             elif [ "$choice" -eq "$others_idx" ]; then
                 others_menu "${uninstalled_files[@]}"
             elif [ "$choice" -eq "$wipe_idx" ]; then
-                smart_wipe
-                read -p "Press Enter to continue..."
+                wipe_menu
             fi
         elif [[ "$choice" =~ ^[eE]$ ]]; then
             clear
