@@ -4,13 +4,15 @@ CLR_RED='\033[0;31m'
 CLR_GRN='\033[0;32m'
 CLR_YLW='\033[1;33m'
 CLR_BLU='\033[0;34m'
+CLR_CYN='\033[0;36m'
 CLR_ORG='\033[38;5;208m'
+CLR_MUTED='\033[90m'
 CLR_NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_RAW_URL="https://raw.githubusercontent.com/h4m1dr/app-folder/main/Node-js"
 CACHE_DIR="/tmp/app-folder-cache"
-PERM_DIR="/opt/app-folder"
+PERM_DIR="/opt/app-folder/Node-js"
 
 KNOWN_APPS=("9router.sh")
 
@@ -30,6 +32,26 @@ ensure_system_deps
 is_node_installed() {
     command -v node &> /dev/null && return 0
     return 1
+}
+
+get_node_version_status() {
+    if is_node_installed; then
+        local cur_v latest_v
+        cur_v=$(node -v 2>/dev/null)
+        # Fetch LTS or latest remote release cleanly
+        latest_v=$(curl -fsSL --max-time 2 https://nodejs.org/dist/index.tab 2>/dev/null | awk 'NR==2 {print $1}')
+        if [ -n "$latest_v" ] && [ -n "$cur_v" ]; then
+            if [ "$cur_v" == "$latest_v" ]; then
+                echo -e "${CLR_GRN}$cur_v ${CLR_MUTED}(latest)${CLR_NC}"
+            else
+                echo -e "${CLR_YLW}$cur_v ${CLR_MUTED}-> ${CLR_GRN}$latest_v${CLR_NC}"
+            fi
+        else
+            echo -e "${CLR_GRN}$cur_v${CLR_NC}"
+        fi
+    else
+        echo -e "${CLR_RED}Not Installed${CLR_NC}"
+    fi
 }
 
 # ================= Node.js Engine =================
@@ -69,7 +91,7 @@ node_delete() {
     apt-get autoremove -y 2>/dev/null
     rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg
     rm -rf /root/.npm /root/.node-gyp /usr/local/lib/node_modules /usr/lib/node_modules
-    echo -e "${CLR_GRN}[+] Node.js removed.${CLR_NC}"
+    echo -e "${CLR_GRN}[+] Node.js removed.${NC}"
 }
 
 node_menu() {
@@ -79,7 +101,7 @@ node_menu() {
         echo "          Node.js Engine Menu         "
         echo "======================================"
         if is_node_installed; then
-            echo -e " Version     : ${CLR_GRN}$(node -v)${CLR_NC}"
+            echo -e " Version     : $(get_node_version_status)"
             echo -e " Binary Path : ${CLR_BLU}$(which node)${CLR_NC}"
             echo -e " NPM Global  : ${CLR_BLU}$(npm root -g 2>/dev/null)${CLR_NC}"
         else
@@ -130,10 +152,10 @@ wipe_cache_folder() {
 }
 
 wipe_permanent_folder() {
-    echo -e "${CLR_RED}[!] Warning: This will delete permanent repository directory ($PERM_DIR).${CLR_NC}"
+    echo -e "${CLR_RED}[!] Warning: This will delete permanent repository directory (/opt/app-folder).${CLR_NC}"
     read -p " Are you sure you want to delete permanent folder? [y/N]: " confirm
     if [[ "$confirm" =~ ^[yY]$ ]]; then
-        rm -rf "$PERM_DIR"
+        rm -rf /opt/app-folder
         rm -f /usr/local/bin/nodejs-easy
         echo -e "${CLR_GRN}[+] Permanent application files and system symlink wiped.${CLR_NC}"
     else
@@ -142,7 +164,6 @@ wipe_permanent_folder() {
 }
 
 wipe_menu() {
-    local CLR_MUTED='\033[90m' # Subtle dark gray for secondary descriptions
     while true; do
         clear
         echo "======================================"
@@ -174,6 +195,27 @@ wipe_menu() {
             *) ;;
         esac
     done
+}
+
+# ================= Self-Updater =================
+self_update() {
+    echo -e "${CLR_BLU}[*] Reinstalling and updating scripts from GitHub...${CLR_NC}"
+    rm -rf "$CACHE_DIR"
+
+    if [ -d "$PERM_DIR" ] && [ -f "$PERM_DIR/NodejsEasy" ]; then
+        curl -fsSL "$REPO_RAW_URL/NodejsEasy" -o "$PERM_DIR/NodejsEasy"
+        curl -fsSL "$REPO_RAW_URL/9router.sh" -o "$PERM_DIR/9router.sh"
+        chmod +x "$PERM_DIR/NodejsEasy" "$PERM_DIR"/*.sh
+        echo -e "${CLR_GRN}[+] Permanent installation files updated.${CLR_NC}"
+        exec "$PERM_DIR/NodejsEasy"
+    else
+        mkdir -p "$CACHE_DIR"
+        curl -fsSL "$REPO_RAW_URL/NodejsEasy" -o "$CACHE_DIR/NodejsEasy"
+        curl -fsSL "$REPO_RAW_URL/9router.sh" -o "$CACHE_DIR/9router.sh"
+        chmod +x "$CACHE_DIR/NodejsEasy" "$CACHE_DIR"/*.sh
+        echo -e "${CLR_GRN}[+] Runner scripts updated.${CLR_NC}"
+        exec bash "$CACHE_DIR/NodejsEasy"
+    fi
 }
 
 # ================= Others Sub-Menu =================
@@ -233,11 +275,7 @@ main_menu() {
         echo "======================================"
         echo "          NodejsEasy Manager          "
         echo "======================================"
-        if is_node_installed; then
-            echo -e " Node.js State : ${CLR_GRN}Installed ($(node -v))${CLR_NC}"
-        else
-            echo -e " Node.js State : ${CLR_RED}Not Installed${CLR_NC}"
-        fi
+        echo -e " Node.js State : $(get_node_version_status)"
         echo "--------------------------------------"
         echo " 1) Node js"
 
@@ -249,7 +287,6 @@ main_menu() {
             [ -f "$f" ] && target_scripts+=("$f")
         done
 
-        # If running via curl without local files, always pull latest from GitHub
         if [ ${#target_scripts[@]} -eq 0 ]; then
             mkdir -p "$CACHE_DIR"
             for app_script in "${KNOWN_APPS[@]}"; do
@@ -284,6 +321,7 @@ main_menu() {
         local wipe_idx=$idx
         echo " $wipe_idx) wipe"
         echo ""
+        echo -e " ${CLR_CYN}i) Self-Update & Reinstall${CLR_NC}"
         echo -e " ${CLR_RED}e) Exit${CLR_NC}"
         echo "======================================"
         read -p " Select option: " choice
@@ -304,6 +342,8 @@ main_menu() {
             elif [ "$choice" -eq "$wipe_idx" ]; then
                 wipe_menu
             fi
+        elif [[ "$choice" =~ ^[iI]$ ]]; then
+            self_update
         elif [[ "$choice" =~ ^[eE]$ ]]; then
             clear
             exit 0
